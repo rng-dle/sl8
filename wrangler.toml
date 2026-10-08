@@ -1,0 +1,13 @@
+name = "sl8"
+main = "src/worker.js"
+compatibility_date = "2025-09-01"
+routes = [{ pattern = "sl8.nastaliq.co", custom_domain = true }]
+
+[assets]
+directory = "./public"
+binding = "ASSETS"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "sl8-db"
+database_id = "ed289357-d1e9-41e0-a4d5-14a71ef1e4f1"

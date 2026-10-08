@@ -1,0 +1,238 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>sl8</title>
+<meta name="description" content="Notes on an endless page. Write with a stylus, type with a keyboard.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { padding-inline: 16px; padding-block: calc(env(safe-area-inset-top, 0px) + 16px) calc(env(safe-area-inset-bottom, 0px) + 32px); }
+  .wrap { max-width: 1040px; margin: 0 auto; }
+
+  /* signed out */
+  #auth { display: grid; gap: 28px; align-content: center; min-height: calc(100dvh - 64px); grid-template-areas: "brand" "card" "features"; }
+  @media (min-width: 860px) {
+    #auth { grid-template-columns: 1.15fr 1fr; grid-template-areas: "brand card" "features card"; column-gap: 64px; row-gap: 0; align-items: center; }
+    .brand { align-self: end; }
+    .features { align-self: start; }
+  }
+  .brand { grid-area: brand; }
+  .card { grid-area: card; }
+  .features { grid-area: features; }
+  .brand h1 { margin: 0; font: 400 clamp(64px, 14vw, 112px)/0.95 var(--font-display); letter-spacing: -0.01em; }
+  .stroke { display: block; width: min(340px, 80%); height: auto; margin: 6px 0 20px -4px; overflow: visible; }
+  .stroke path { fill: none; stroke: var(--accent); stroke-width: 7; stroke-linecap: round; stroke-dasharray: 420; stroke-dashoffset: 0; animation: write 1.4s cubic-bezier(.6,.05,.3,1) both .2s; }
+  @keyframes write { from { stroke-dashoffset: 420; } }
+  .pitch { margin: 0 0 24px; max-width: 30ch; font-size: clamp(19px, 2.6vw, 23px); line-height: 1.4; text-wrap: balance; }
+  .features { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 15px; }
+  .features li { display: flex; gap: 10px; align-items: baseline; }
+  .features li::before { content: ''; flex: none; width: 14px; height: 2px; border-radius: 2px; background: var(--accent); transform: translateY(-4px); }
+
+  .card { display: grid; gap: 18px; padding: 24px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
+  .tabs { display: grid; grid-template-columns: 1fr 1fr; padding: 4px; border-radius: 12px; background: var(--paper); border: 1px solid var(--line); }
+  .tabs button { min-height: 40px; border: 0; border-radius: 9px; background: transparent; font-weight: 600; color: var(--muted); }
+  .tabs button[aria-selected="true"] { background: var(--surface); color: var(--text); box-shadow: 0 1px 3px rgb(0 0 0 / 0.12); }
+  form { display: grid; gap: 14px; }
+  .hint { margin: -6px 0 0; font-size: 13px; color: var(--muted); }
+  .error { margin: 0; padding: 10px 12px; border-radius: 8px; background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); font-size: 14px; font-weight: 500; }
+
+  /* signed in */
+  .top { display: flex; align-items: center; gap: 12px; padding-bottom: 20px; border-bottom: 1px solid var(--line); }
+  .top .mark { font: 400 28px/1 var(--font-display); margin-right: auto; }
+  .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 14px; }
+  .top .btn { min-height: 38px; padding: 0 14px; font-size: 14px; }
+  .head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 16px; margin: 32px 0 12px; }
+  .head h2 { margin: 0; font: 400 clamp(32px, 6vw, 44px)/1.05 var(--font-display); }
+  .head h2 small { font: 500 15px var(--font-ui); color: var(--muted); margin-left: 8px; font-variant-numeric: tabular-nums; }
+  .notes { margin: 0; padding: 0; list-style: none; }
+  .notes li { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); }
+  .notes a { flex: 1; min-width: 0; display: grid; gap: 2px; padding: 16px 4px; color: var(--text); text-decoration: none; }
+  .notes a:hover .t { color: var(--accent); }
+  .notes .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 21px/1.25 var(--font-display); }
+  .notes .d { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .del { flex: none; color: var(--muted); }
+  .del.confirm { width: auto; padding: 0 12px; background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); font-size: 14px; font-weight: 600; }
+  .empty { padding: 48px 0; color: var(--muted); max-width: 44ch; }
+  .empty b { display: block; font: 400 24px/1.2 var(--font-display); color: var(--text); margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <section id="auth" hidden>
+    <div class="brand">
+      <h1>sl8</h1>
+      <svg class="stroke" viewBox="0 0 340 40" aria-hidden="true"><path d="M4 30 C 40 6, 70 6, 92 22 S 140 38, 176 20 S 250 4, 336 18"/></svg>
+      <p class="pitch">Notes on an endless page. Write with a stylus, type with a keyboard, and keep going in any direction.</p>
+    </div>
+    <ul class="features">
+        <li>Pressure-sensitive ink for S Pen, Apple Pencil and drawing tablets</li>
+        <li>Text boxes anywhere on the page</li>
+        <li>Saves as you go, on every device you sign in to</li>
+    </ul>
+    <div class="card">
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" id="tab-login" aria-selected="true">Log in</button>
+        <button type="button" role="tab" id="tab-signup" aria-selected="false">Create account</button>
+      </div>
+      <form id="form" novalidate>
+        <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="email" inputmode="email" required></div>
+        <div class="field"><label for="password">Password</label><input id="password" type="password" autocomplete="current-password" minlength="8" required></div>
+        <p class="hint" id="pw-hint" hidden>Use 8 or more characters.</p>
+        <p class="error" id="error" role="alert" hidden></p>
+        <button class="btn primary" id="submit" type="submit">Log in</button>
+      </form>
+    </div>
+  </section>
+
+  <section id="app" hidden>
+    <header class="top">
+      <span class="mark">sl8</span>
+      <span class="who" id="who"></span>
+      <button class="btn" id="logout" type="button">Log out</button>
+    </header>
+    <div class="head">
+      <h2>Your notes<small id="count"></small></h2>
+      <button class="btn primary" id="new" type="button">New note</button>
+    </div>
+    <ul class="notes" id="notes"></ul>
+    <p class="empty" id="empty" hidden><b>No notes yet</b>Each note is an endless page. Start one and write, draw or type anywhere on it.</p>
+  </section>
+</div>
+<div id="toast" class="toast" role="alert" hidden></div>
+<script src="/common.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let mode = 'login';
+
+function show(id) {
+  $('#auth').hidden = id !== 'auth';
+  $('#app').hidden = id !== 'app';
+}
+
+function setMode(m) {
+  mode = m;
+  $('#tab-login').setAttribute('aria-selected', String(m === 'login'));
+  $('#tab-signup').setAttribute('aria-selected', String(m === 'signup'));
+  $('#submit').textContent = m === 'login' ? 'Log in' : 'Create account';
+  $('#password').autocomplete = m === 'login' ? 'current-password' : 'new-password';
+  $('#pw-hint').hidden = m === 'login';
+  $('#error').hidden = true;
+}
+$('#tab-login').onclick = () => setMode('login');
+$('#tab-signup').onclick = () => setMode('signup');
+
+$('#form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = $('#submit');
+  btn.disabled = true;
+  $('#error').hidden = true;
+  try {
+    const me = await api(mode === 'login' ? '/api/login' : '/api/signup', {
+      method: 'POST', body: { email: $('#email').value, password: $('#password').value },
+    });
+    $('#password').value = '';
+    enter(me.email);
+  } catch (err) {
+    $('#error').textContent = err.status ? err.message : 'Could not reach the server. Check your connection and try again.';
+    $('#error').hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+function ago(ms) {
+  const s = (ms - Date.now()) / 1000;
+  for (const [unit, n] of [['year', 31536000], ['month', 2592000], ['week', 604800], ['day', 86400], ['hour', 3600], ['minute', 60]]) {
+    if (Math.abs(s) >= n) return rtf.format(Math.round(s / n), unit);
+  }
+  return 'just now';
+}
+
+function renderNotes(notes) {
+  $('#count').textContent = notes.length ? String(notes.length) : '';
+  $('#empty').hidden = notes.length > 0;
+  $('#notes').replaceChildren(...notes.map((n) => {
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.href = '/note?id=' + encodeURIComponent(n.id);
+    const t = document.createElement('span'); t.className = 't'; t.textContent = n.title;
+    const d = document.createElement('span'); d.className = 'd'; d.textContent = 'Edited ' + ago(n.updated_at);
+    a.append(t, d);
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'icon-btn del';
+    del.setAttribute('aria-label', 'Delete ' + n.title);
+    del.innerHTML = '<svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+    let timer;
+    del.onclick = async () => {
+      if (!del.classList.contains('confirm')) {
+        del.classList.add('confirm');
+        del.textContent = 'Delete note';
+        timer = setTimeout(() => renderNotes(current), 4000);
+        return;
+      }
+      clearTimeout(timer);
+      del.disabled = true;
+      try {
+        await api('/api/notes/' + encodeURIComponent(n.id), { method: 'DELETE' });
+        current = current.filter((x) => x.id !== n.id);
+        renderNotes(current);
+      } catch (err) {
+        toast(err.message);
+        renderNotes(current);
+      }
+    };
+    li.append(a, del);
+    return li;
+  }));
+}
+
+let current = [];
+async function loadNotes() {
+  try {
+    current = (await api('/api/notes')).notes;
+    renderNotes(current);
+  } catch (err) {
+    if (err.status === 401) return show('auth');
+    toast(err.message);
+  }
+}
+
+function enter(email) {
+  $('#who').textContent = email;
+  show('app');
+  loadNotes();
+}
+
+$('#new').onclick = async () => {
+  $('#new').disabled = true;
+  try {
+    const { note } = await api('/api/notes', { method: 'POST', body: { title: 'Untitled' } });
+    location.href = '/note?id=' + encodeURIComponent(note.id);
+  } catch (err) {
+    toast(err.message);
+    $('#new').disabled = false;
+  }
+};
+
+$('#logout').onclick = async () => {
+  try { await api('/api/logout', { method: 'POST' }); } catch {}
+  current = [];
+  setMode('login');
+  show('auth');
+};
+
+addEventListener('pageshow', (e) => { if (e.persisted && !$('#app').hidden) loadNotes(); });
+
+api('/api/me').then((me) => enter(me.email)).catch((err) => {
+  show('auth');
+  if (err.status !== 401) toast(err.status ? err.message : 'Could not reach the server.');
+});
+</script>
+</body>
+</html>

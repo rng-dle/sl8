@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<title>Note · sl8</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/style.css">
+<style>
+  body { overflow: hidden; overscroll-behavior: none; touch-action: manipulation; }
+  #board {
+    position: fixed; inset: 0; overflow: hidden;
+    touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+    background-color: var(--paper);
+    background-image: radial-gradient(circle, var(--dot) 1.1px, transparent 1.3px);
+  }
+  #board canvas { position: absolute; inset: 0; }
+  #live { cursor: crosshair; }
+  body.tool-hand #live, body.panning #live { cursor: grab; }
+  body.tool-text #live { cursor: text; }
+
+  #texts { position: absolute; left: 0; top: 0; transform-origin: 0 0; pointer-events: none; }
+  .tb { position: absolute; pointer-events: none; }
+  body.tool-text .tb, .tb:focus-within { pointer-events: auto; }
+  .tb textarea {
+    display: block; width: 100%; min-width: 80px; padding: 4px 6px; margin: 0;
+    border: 1px solid transparent; border-radius: 6px; background: transparent;
+    color: var(--c); font: 400 var(--fs)/1.35 var(--font-ui);
+    resize: none; overflow: hidden; outline: none; user-select: text; -webkit-user-select: text;
+  }
+  .tb:focus-within textarea { resize: horizontal; }
+  body.tool-text .tb textarea:hover { border-color: var(--line); }
+  .tb:focus-within textarea { border-color: var(--accent); background: color-mix(in srgb, var(--surface) 85%, transparent); }
+  .tb-bar { position: absolute; bottom: 100%; right: 0; display: none; gap: 4px; padding-bottom: 4px; }
+  .tb:focus-within .tb-bar { display: flex; }
+  .tb-bar button {
+    min-width: 32px; height: 28px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px;
+    background: var(--surface); font-size: 13px; font-weight: 600; touch-action: none;
+  }
+  .tb-bar .tb-move { cursor: move; }
+
+  .topbar {
+    position: fixed; left: 0; right: 0; top: 0; z-index: 10;
+    display: flex; align-items: center; gap: 6px;
+    padding: calc(env(safe-area-inset-top, 0px) + 8px) 12px 8px;
+    pointer-events: none;
+  }
+  .topbar > * { pointer-events: auto; }
+  .topbar .icon-btn { background: var(--surface); box-shadow: var(--shadow); }
+  .title-input {
+    min-width: 0; flex: 0 1 360px; height: 40px; padding: 0 12px;
+    border: 1px solid transparent; border-radius: 8px;
+    background: var(--surface); box-shadow: var(--shadow);
+    font-family: var(--font-display); font-size: 19px; text-overflow: ellipsis;
+  }
+  .title-input:focus { border-color: var(--accent); outline: none; }
+  .status { margin-left: auto; padding: 4px 10px; border-radius: 999px; background: var(--surface); box-shadow: var(--shadow); font-size: 13px; color: var(--muted); white-space: nowrap; }
+  .status[data-state="error"] { color: var(--danger); }
+
+  .dock {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    padding: 8px 12px calc(env(safe-area-inset-bottom, 0px) + 12px);
+    pointer-events: none;
+  }
+  .bar {
+    pointer-events: auto; display: flex; align-items: center; gap: 2px; max-width: 100%;
+    padding: 4px; border: 1px solid var(--line); border-radius: 14px;
+    background: var(--surface); box-shadow: var(--shadow);
+  }
+  .sep { width: 1px; height: 24px; margin: 0 4px; background: var(--line); }
+  .zoom { width: auto; min-width: 52px; padding: 0 6px; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .options { gap: 6px; padding: 4px 8px; }
+  .swatch {
+    width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent;
+    display: grid; place-items: center;
+  }
+  .swatch span { width: 20px; height: 20px; border-radius: 50%; background: var(--c); box-shadow: inset 0 0 0 1px rgb(127 127 127 / 0.25); }
+  .swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--accent); }
+  .size { width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; display: grid; place-items: center; }
+  .size span { border-radius: 50%; background: var(--text); }
+  .size[aria-pressed="true"] { background: var(--accent-soft); }
+  .size[aria-pressed="true"] span { background: var(--accent); }
+  .empty-hint {
+    position: fixed; left: 50%; top: 42%; transform: translate(-50%, -50%);
+    max-width: calc(100% - 48px); text-align: center; color: var(--muted); pointer-events: none;
+  }
+  .empty-hint b { display: block; font: 400 26px/1.2 var(--font-display); color: var(--text); margin-bottom: 6px; }
+</style>
+</head>
+<body class="tool-pen">
+<div id="board">
+  <canvas id="base"></canvas>
+  <canvas id="live"></canvas>
+  <div id="texts"></div>
+</div>
+<p class="empty-hint" id="hint" hidden><b>A blank, endless page</b>Write with your pen, or pick the text tool and tap to type. Drag with two fingers to move around.</p>
+
+<header class="topbar">
+  <a class="icon-btn" id="back" href="/" aria-label="All notes"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></a>
+  <input id="title" class="title-input" aria-label="Note title" maxlength="200" autocomplete="off">
+  <span id="status" class="status" role="status">Loading…</span>
+</header>
+
+<div class="dock">
+  <div class="bar options" id="options">
+    <div id="swatches" style="display:flex;gap:2px"></div>
+    <span class="sep"></span>
+    <div id="sizes" style="display:flex;gap:2px"></div>
+  </div>
+  <nav class="bar" aria-label="Tools">
+    <button class="icon-btn" data-tool="pen" aria-label="Pen (P)" title="Pen (P)"><svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.4 3.6a2.1 2.1 0 0 1 3 3L7.4 18.6a2 2 0 0 1-.9.5l-2.9.8a.5.5 0 0 1-.6-.6l.8-2.9a2 2 0 0 1 .5-.9z"/></svg></button>
+    <button class="icon-btn" data-tool="hl" aria-label="Highlighter (H)" title="Highlighter (H)"><svg viewBox="0 0 24 24"><path d="m9 11-6 6v3h9l3-3"/><path d="m22 12-4.6 4.6a2 2 0 0 1-2.8 0l-5.2-5.2a2 2 0 0 1 0-2.8L14 4"/></svg></button>
+    <button class="icon-btn" data-tool="eraser" aria-label="Eraser (E)" title="Eraser (E)"><svg viewBox="0 0 24 24"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg></button>
+    <button class="icon-btn" data-tool="text" aria-label="Text (T)" title="Text (T)"><svg viewBox="0 0 24 24"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg></button>
+    <button class="icon-btn" data-tool="hand" aria-label="Move around (Space)" title="Move around (hold Space)"><svg viewBox="0 0 24 24"><path d="m5 9-3 3 3 3"/><path d="m9 5 3-3 3 3"/><path d="m15 19-3 3-3-3"/><path d="m19 9 3 3-3 3"/><path d="M2 12h20"/><path d="M12 2v20"/></svg></button>
+    <span class="sep"></span>
+    <button class="icon-btn" id="undo" aria-label="Undo" title="Undo (Ctrl+Z)" disabled><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
+    <button class="icon-btn" id="redo" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" disabled><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>
+    <span class="sep"></span>
+    <button class="icon-btn zoom" id="zoom" title="Reset zoom to 100% (0)">100%</button>
+  </nav>
+</div>
+<div id="toast" class="toast" role="alert" hidden></div>
+<script src="/common.js"></script>
+<script src="/note.js"></script>
+</body>
+</html>
