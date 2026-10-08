@@ -20,7 +20,7 @@ It goes live at `https://sl8.nastaliq.co`. Wrangler creates the DNS record and c
 npx wrangler d1 execute sl8-db --local --file=schema.sql && npx wrangler dev
 ```
 
-Then in another terminal: `bash smoke-test.sh` (signup, save, isolation between users, lockout, logout).
+Then in another terminal: `bash smoke-test.sh` (signup, save, isolation between users, lockout, logout) and `python3 pen-test.py` (simulated S Pen with a resting palm; needs `pip install playwright && playwright install chromium`).
 
 ## Using it
 

@@ -396,8 +396,27 @@ function startPinch() {
   schedule(false);
 }
 
+let lastPen = 0; // time of the last pen event, hovering included
+function notePen() {
+  lastPen = Date.now();
+  if (!penSeen) { penSeen = true; store.set('sl8:penSeen', true); }
+}
+// palm rejection: the hand resting on the screen is ignored while the pen is down or near it
+const penBusy = () => Date.now() - lastPen < 800 || [...pointers.values()].some((p) => p.type === 'pen');
+
 function onDown(e) {
-  if (e.pointerType === 'pen' && !penSeen) { penSeen = true; store.set('sl8:penSeen', true); }
+  const isPen = e.pointerType === 'pen';
+  if (e.pointerType === 'touch' && penSeen && penBusy()) return;
+  if (isPen) {
+    notePen();
+    if (gesture) { // the pen beats whatever a touch started, e.g. a palm that landed first
+      if (gesture.kind === 'erase') endErase(gesture);
+      gesture = null;
+      pointers.clear();
+      document.body.classList.remove('panning');
+      schedule(false);
+    }
+  }
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, type: e.pointerType });
   live.setPointerCapture(e.pointerId);
   const wasEditing = document.activeElement?.tagName === 'TEXTAREA';
@@ -547,9 +566,9 @@ live.addEventListener('pointermove', onMove);
 live.addEventListener('pointerup', onUp);
 live.addEventListener('pointercancel', onUp);
 live.addEventListener('contextmenu', (e) => e.preventDefault());
-board.addEventListener('pointerover', (e) => {
-  if (e.pointerType === 'pen' && !penSeen) { penSeen = true; store.set('sl8:penSeen', true); }
-});
+for (const type of ['pointerover', 'pointermove']) {
+  board.addEventListener(type, (e) => e.pointerType === 'pen' && notePen());
+}
 board.addEventListener('wheel', (e) => {
   e.preventDefault();
   const k = e.deltaMode === 1 ? 16 : 1;
