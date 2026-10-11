@@ -36,13 +36,15 @@ npx wrangler dev --port 8787 --local-upstream 127.0.0.1:8787
 Then, in another terminal:
 
 ```
-bash test/smoke-test.sh && node test/ai-test.mjs && node test/account-test.mjs && python3 test/pen-test.py && python3 test/journey.py
+bash test/smoke-test.sh && node test/ai-test.mjs && node test/account-test.mjs && node test/share-test.mjs && python3 test/pen-test.py && python3 test/journey.py && python3 test/share-journey.py
 ```
 
 - `smoke-test.sh`: accounts, saving, isolation between users, lockout, logout.
 - `ai-test.mjs`: AI connections, encryption at rest, OpenRouter sign-in (PKCE), scopes, retrieval, every error state, the daily cap.
 - `account-test.mjs`: password reset by email, change password, log out everywhere, export, search, account deletion, rate limits, the 404 page.
+- `share-test.mjs`: share links (whole canvas or squares, view or edit), area checks on every write, files through links, catching up on changes and deletes.
 - `pen-test.py`: simulated S Pen with a resting palm, and the "Draw with finger" toggle.
+- `share-journey.py`: sharing chosen squares in a browser, someone without an account editing inside them, the owner's canvas and second device picking changes up, view links.
 - `journey.py`: the whole journey in a browser, from signup through setup, the reveal, writing, selecting, asking AI and reloading, to settings, search, password reset and a phone layout.
 
 The Python tests need `pip install playwright && playwright install chromium`.
@@ -61,6 +63,8 @@ The Python tests need `pip install playwright && playwright install chromium`.
 - **Desktop:** the wheel pans, Ctrl + wheel or a trackpad pinch zooms, and holding Space lets you drag. Ctrl+Z and Ctrl+Shift+Z undo and redo.
 - **Appearance:** theme and canvas background in the ⋯ menu or Settings. The opening animation can be set to Full, Short or Off.
 - **Saving:** changes save every second. Offline edits stay on the device and are sent when the connection returns.
+- **Sync:** an open canvas checks for changes every 3 seconds while it's on screen (slower when nothing is happening), so a phone and a laptop on the same canvas see each other's writing.
+- **Sharing (⋯ → Share…):** a link to view or edit, for the whole canvas or for chosen squares of the dot grid. Squares follow the zoom (96 to 192 px on screen when picked); each one holds the four smaller squares inside it, and an item belongs to the square its first point is in. People with the link need no account. The server checks every change from a link against its squares, links can't add photos, videos or portals, and Turn off ends a link at once.
 - **Search:** on the Canvases page, across everything typed and every canvas title. Results open the canvas at that note.
 - **Account (Settings):** change password, download all your data as JSON, log out on all devices, delete the account.
 - **Install:** the site has an app icon and manifest, so "Add to Home screen" on a phone opens it like an app.
@@ -71,4 +75,5 @@ The Python tests need `pip install playwright && playwright install chromium`.
 - Email verification on sign-up.
 - Bot protection on sign-up beyond the rate limits (Cloudflare Turnstile).
 - Sign in with ChatGPT: OpenAI requires approval for hosted apps (interest form linked in `docs/PLAN.md`).
-- Handwriting recognition, semantic search, connections between notes, and sharing.
+- Handwriting recognition and semantic search.
+- Live strokes while someone is drawing (sync is every few seconds; a Durable Object with WebSockets would make it live).

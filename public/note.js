@@ -2,7 +2,20 @@
 // Items live in world coordinates; the camera maps world -> screen as screen = world * z + (x, y).
 // ai-panel.js loads after this file and uses its globals (items, selection, commit, focusItem, ...).
 const $ = (s) => document.querySelector(s);
-const noteId = new URLSearchParams(location.search).get('id');
+const params = new URLSearchParams(location.search);
+const noteId = params.get('id');
+// opened from a share link (?share=<token>): no account needed; `share` is { mode: 'read'|'write', area } once loaded
+const shareToken = /^[a-f0-9]{64}$/.test(params.get('share')) ? params.get('share') : null;
+const notePath = shareToken ? `/api/shared/${shareToken}` : `/api/notes/${noteId}`;
+const canvasKey = noteId || 'share:' + shareToken; // this device's camera and unsent changes are kept under it
+let share = null;
+// Dot-grid containers, the same maths as the server: level k squares are CELL * 2^k units, aligned to the origin,
+// so each splits into four one level down. An item belongs to the square its first point is in.
+const CELL = 24;
+const cellAt = (k, x, y) => { const s = CELL * 2 ** k; return `${k}/${Math.floor(x / s)}/${Math.floor(y / s)}`; };
+const inCells = (cells, x, y) => cells.some((c) => cellAt(+c.split('/')[0], x, y) === c);
+const canWrite = (x, y) => !share || (share.mode === 'write' && (share.area === '*' || inCells(share.area, x, y)));
+if (shareToken) fileUrl = (id) => `${notePath}/files/${encodeURIComponent(id)}`; // the owner's photos, through the link
 const board = $('#board'), base = $('#base'), live = $('#live'), textsEl = $('#texts');
 const bctx = base.getContext('2d'), lctx = live.getContext('2d');
 const statusEl = $('#status'), titleEl = $('#title');
@@ -37,7 +50,7 @@ const cssColor = (c) => (HEX.test(c) ? c : `var(--ink-${COLORS.includes(c) ? c :
 const items = new Map(); // id -> item
 const selection = new Set(); // ids of selected items
 let sorted = null; // items ordered by creation time, rebuilt on demand
-let cam = store.get('sl8:cam:' + noteId) || { x: 48, y: 96, z: 1 };
+let cam = store.get('sl8:cam:' + canvasKey) || { x: 48, y: 96, z: 1 };
 let palette = {};
 let penSeen = !!store.get('sl8:penSeen');
 let spaceDown = false;
@@ -258,6 +271,7 @@ function distToSegment(x, y, [ax, ay], [bx, by]) {
 }
 function paintLive() {
   clear(lctx);
+  if (picking || (share?.mode === 'write' && share.area !== '*')) paintCells();
   if (gesture?.kind === 'draw' && gesture.stroke.p.length) {
     setCam(lctx);
     drawStroke(lctx, gesture.stroke);
@@ -390,7 +404,7 @@ let camSaveTimer;
 function camChanged() {
   schedule(true);
   clearTimeout(camSaveTimer);
-  camSaveTimer = setTimeout(() => store.set('sl8:cam:' + noteId, cam), 400);
+  camSaveTimer = setTimeout(() => store.set('sl8:cam:' + canvasKey, cam), 400);
 }
 function zoomAt(sx, sy, factor) {
   const z = Math.min(8, Math.max(0.1, cam.z * factor));
@@ -471,7 +485,7 @@ function updateUndo() {
 }
 
 const pending = new Map(); // id -> item, or null for a delete
-const pendingKey = 'sl8:pending:' + noteId;
+const pendingKey = 'sl8:pending:' + canvasKey;
 let inflight = null, retryDelay = 0, saveTimer = 0, stopped = false, leaving = false;
 
 function setStatus(text, state = '') {
@@ -479,6 +493,8 @@ function setStatus(text, state = '') {
   statusEl.dataset.state = state;
 }
 function queue(id, item) {
+  if (share?.mode === 'read') return;
+  lastActivity = Date.now();
   pending.set(id, item);
   store.set(pendingKey, [...pending]); // survives a crash or closed tab
   setStatus('Saving…');
@@ -499,16 +515,25 @@ function flush(keepalive = false) {
 async function send(keepalive) {
   const batch = [...pending].slice(0, BATCH);
   try {
-    await api(`/api/notes/${noteId}/ops`, {
+    const res = await api(`${notePath}/ops`, {
       method: 'POST', keepalive,
       body: { ops: batch.map(([id, it]) => (it ? { put: it } : { del: id })) },
     });
+    saves++;
     for (const [id, it] of batch) if (pending.get(id) === it) pending.delete(id);
     store.set(pendingKey, pending.size ? [...pending] : null);
     retryDelay = 0;
     setStatus(pending.size ? 'Saving…' : 'Saved');
+    if (res.rejected) { // a share link changed something outside its area: put back what's really there
+      toast('Only the highlighted squares are shared with you, so that change was undone.');
+      resync().catch(() => {});
+    }
   } catch (e) {
-    if (e.status === 401) {
+    if (e.status === 404 && shareToken) {
+      stopped = true;
+      setStatus('Link turned off', 'error');
+      toast('This link was turned off, so changes here are no longer saved.');
+    } else if (e.status === 401) {
       stopped = true;
       setStatus('Logged out', 'error');
       toast('You were logged out. Log in again and reopen this canvas; your unsaved changes stay on this device.');
@@ -528,6 +553,58 @@ async function send(keepalive) {
   }
 }
 addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && flush(true));
+
+/* ---------- sync: changes from your other devices and from people with a link ---------- */
+// Bring in items changed elsewhere. Anything with unsaved local changes, being moved or being typed in stays as it is here.
+function merge(list, gone) {
+  const busy = (id) => pending.has(id) || gesture?.orig?.has?.(id) || !!textEls.get(id)?.contains(document.activeElement);
+  let changed = false;
+  for (const it of list) {
+    if (busy(it.id)) continue;
+    const cur = items.get(it.id);
+    if (cur && JSON.stringify(cur) === JSON.stringify(it)) continue; // our own save coming back
+    apply(it.id, it, false);
+    changed = true;
+  }
+  for (const id of gone) {
+    if (!items.has(id) || busy(id)) continue;
+    apply(id, null, false);
+    changed = true;
+  }
+  if (changed) schedule(true);
+  return changed;
+}
+async function resync() {
+  const r = await api(notePath);
+  since = r.now;
+  const ids = new Set(r.items.map((it) => it.id));
+  merge(r.items, [...items.keys()].filter((id) => !ids.has(id)));
+}
+// ponytail: polls every 3 s while visible, slowing down when nothing happens; a Durable Object with WebSockets would make it live
+let since = 0, saves = 0, lastActivity = Date.now(), pollTimer = 0;
+async function poll() {
+  clearTimeout(pollTimer);
+  if (stopped || !since || document.visibilityState !== 'visible') return;
+  const idle = Date.now() - lastActivity;
+  const next = () => { pollTimer = setTimeout(poll, idle < 120e3 ? 3000 : idle < 600e3 ? 10000 : 30000); };
+  if (inflight) return next();
+  const n = saves;
+  try {
+    const r = await api(`${notePath}?since=${since}`);
+    if (r.reload) await resync();
+    else if (n === saves) { // a save that finished meanwhile may be newer than this answer; ask again next time
+      if (merge(r.items, r.gone)) lastActivity = Date.now();
+      since = r.now;
+    }
+  } catch (e) {
+    if (e.status === 401 || e.status === 404) {
+      stopped = true;
+      return setStatus(e.status === 401 ? 'Logged out' : shareToken ? 'Link turned off' : 'Canvas deleted', 'error');
+    }
+  }
+  next();
+}
+addEventListener('visibilitychange', () => document.visibilityState === 'visible' && poll());
 addEventListener('beforeunload', (e) => { if (pending.size && !stopped && !leaving) e.preventDefault(); });
 // finish saving before going back; anything still unsent stays on this device and is sent next time
 $('#back').addEventListener('click', (e) => {
@@ -641,7 +718,9 @@ function makeTextEl(id) {
   textEls.set(id, el);
   return el;
 }
+const outside = () => toast('Only the highlighted squares are shared with you. Write inside them.');
 function newText(wx, wy) {
+  if (!canWrite(wx, wy)) return outside();
   const s = tool.width.text;
   const it = { id: crypto.randomUUID(), kind: 'text', t: Date.now(), x: Math.round(wx), y: Math.round(wy - s * 0.8), w: 320, s, c: tool.color.text, text: '' };
   items.set(it.id, it);
@@ -892,13 +971,20 @@ function onDown(e) {
   }
   if (gesture) return; // another pointer is already busy
 
-  const fingerPans = e.pointerType === 'touch' && !fingerDraws();
-  if (spaceDown || tool.name === 'hand' || e.button === 1 || fingerPans) {
+  const fingerPans = e.pointerType === 'touch' && !fingerDraws() && !picking;
+  if (spaceDown || (tool.name === 'hand' && !picking) || e.button === 1 || fingerPans) {
     gesture = { kind: 'pan', id: e.pointerId, lx: e.clientX, ly: e.clientY };
     document.body.classList.add('panning');
     return;
   }
   if (e.button === 2) return;
+  if (picking) { // choosing squares to share: tap or drag across them; the first square decides add or remove
+    picking.level = pickLevel();
+    picking.adding = !picking.cells.has(cellAt(picking.level, ...toWorld(e.clientX, e.clientY)));
+    gesture = { kind: 'pick', id: e.pointerId };
+    pickAt(e.clientX, e.clientY);
+    return;
+  }
   const penEraser = e.pointerType === 'pen' && (e.buttons & 32 || e.buttons & 2);
   if (penEraser || tool.name === 'eraser') {
     gesture = { kind: 'erase', id: e.pointerId, removed: [], lx: e.clientX, ly: e.clientY, lt: e.timeStamp };
@@ -939,6 +1025,7 @@ function onDown(e) {
     gesture = { kind: 'move', id: e.pointerId, sx: e.clientX, sy: e.clientY, x0: x, y0: y, orig: new Map([...selection].map((id) => [id, items.get(id)])) };
     return;
   }
+  if (!canWrite(...toWorld(e.clientX, e.clientY))) return outside();
   const hl = tool.name === 'hl';
   const pressure = e.pointerType === 'pen' && !hl;
   const stroke = { id: crypto.randomUUID(), kind: 'stroke', t: Date.now(), c: tool.color[tool.name], w: tool.width[tool.name], hl, pr: pressure, p: [] };
@@ -954,9 +1041,13 @@ function sound(g, e) {
   g.lx = e.clientX; g.ly = e.clientY; g.lt = e.timeStamp;
 }
 
-function addPoint(e) {
-  const g = gesture, p = g.stroke.p;
-  const [x, y] = toWorld(e.clientX, e.clientY);
+function addPoint(e, exact, g = gesture) {
+  const p = g.stroke.p;
+  let [x, y] = toWorld(e.clientX, e.clientY);
+  if (e.pointerType === 'mouse' && p.length && !exact) { // steadies a mouse or trackpad hand: each point goes part way to the cursor
+    x = p[p.length - 3] + (x - p[p.length - 3]) * 0.45;
+    y = p[p.length - 2] + (y - p[p.length - 2]) * 0.45;
+  }
   if (p.length && Math.hypot(x - p[p.length - 3], y - p[p.length - 2]) < 0.6 / cam.z) return;
   let pr = 0.5;
   if (g.stroke.pr) {
@@ -1017,6 +1108,8 @@ function onMove(e) {
     const o = gesture.orig, w = Math.max(24, toWorld(e.clientX, e.clientY)[0] - o.x);
     items.set(o.id, { ...o, w: Math.round(w), h: Math.round((w * o.h) / o.w) });
     schedule(true);
+  } else if (gesture.kind === 'pick') {
+    pickAt(e.clientX, e.clientY);
   } else if (gesture.kind === 'marquee') {
     const [x, y] = toWorld(e.clientX, e.clientY), { x0, y0 } = gesture;
     gesture.rect = { x0: Math.min(x, x0), y0: Math.min(y, y0), x1: Math.max(x, x0), y1: Math.max(y, y0) };
@@ -1040,6 +1133,7 @@ function onUp(e) {
   scribble.stop();
 
   if (g.kind === 'draw' && g.stroke.p.length) {
+    if (e.pointerType === 'mouse' && e.type === 'pointerup') addPoint(e, true, g); // end where the cursor is
     commit([{ id: g.stroke.id, before: null, after: g.stroke }]);
     setCam(bctx);
     drawStroke(bctx, g.stroke); // newest stroke is on top, so paint it straight onto the base layer
@@ -1066,8 +1160,10 @@ function onUp(e) {
     } else if (Math.hypot(e.clientX - g.sx, e.clientY - g.sy) > 30) {
       // dragged into empty space: start a new note there, already connected
       const note = newText(g.x, g.y);
-      const c = conn(note.id);
-      commit([{ id: c.id, before: null, after: c }]);
+      if (note) {
+        const c = conn(note.id);
+        commit([{ id: c.id, before: null, after: c }]);
+      }
     }
   } else if (g.kind === 'move' || g.kind === 'marquee') {
     const tap = e.type === 'pointerup' && Math.hypot(e.clientX - g.sx, e.clientY - g.sy) < 6;
@@ -1145,8 +1241,9 @@ board.addEventListener('wheel', (e) => {
 
 /* ---------- toolbar ---------- */
 function setTool(name) {
+  if (share?.mode === 'read') name = 'hand'; // a view link only moves around
+  else store.set('sl8:tool', name);
   tool.name = name;
-  store.set('sl8:tool', name);
   if (name !== 'select' && selection.size) setSelection([]);
   document.body.className = 'tool-' + name;
   for (const b of document.querySelectorAll('[data-tool]')) b.setAttribute('aria-pressed', String(b.dataset.tool === name));
@@ -1477,6 +1574,7 @@ async function upload(file) {
 }
 // Put photos and videos on the canvas, centred on a screen point (the middle of the view unless dropped somewhere).
 async function addMedia(files, sx = board.clientWidth / 2, sy = board.clientHeight / 2) {
+  if (shareToken) return toast("Photos and videos can't be added through a link.");
   files = [...files].filter((f) => /^(image|video)\//.test(f.type));
   if (!files.length) return toast('Choose a photo or a video.');
   toast(files.length > 1 ? `Adding ${files.length} files…` : 'Adding…');
@@ -1559,6 +1657,106 @@ $('#portal-new').addEventListener('submit', async (e) => {
 addEventListener('pointerdown', (e) => {
   if (!$('#portal-menu').hidden && !e.target.closest?.('#portal-menu, #portal-add')) closePortalMenu();
 }, true);
+
+/* ---------- sharing: a link for the whole canvas or for chosen squares of the dot grid, to view or to edit ---------- */
+let picking = null; // { cells: Set of "k/col/row", level, adding } while choosing squares
+// squares 96 to 192 px on screen at this zoom; once one is picked the size stays, so a share is all one level
+const pickLevel = () => (picking.cells.size ? picking.level : Math.max(-4, Math.min(40, Math.ceil(Math.log2(96 / (CELL * cam.z))))));
+function pickAt(sx, sy) {
+  const c = cellAt(picking.level, ...toWorld(sx, sy));
+  if (picking.adding) picking.cells.add(c); else picking.cells.delete(c);
+  const n = picking.cells.size;
+  $('#pick-done').disabled = !n;
+  $('#pick-done').textContent = n ? `Create link (${n})` : 'Create link';
+  schedule(false);
+}
+// the picker's grid and chosen squares, or the squares a link can edit
+function paintCells() {
+  const d = devicePixelRatio || 1, W = board.clientWidth, H = board.clientHeight;
+  lctx.setTransform(d, 0, 0, d, 0, 0);
+  lctx.strokeStyle = palette.accent;
+  lctx.lineWidth = 1.5;
+  if (picking) {
+    const s = CELL * 2 ** pickLevel() * cam.z;
+    lctx.beginPath();
+    for (let x = ((cam.x % s) + s) % s; x < W; x += s) { lctx.moveTo(x, 0); lctx.lineTo(x, H); }
+    for (let y = ((cam.y % s) + s) % s; y < H; y += s) { lctx.moveTo(0, y); lctx.lineTo(W, y); }
+    lctx.globalAlpha = 0.3;
+    lctx.stroke();
+    lctx.globalAlpha = 1;
+  }
+  lctx.fillStyle = palette.accentSoft;
+  for (const c of picking ? picking.cells : share.area) {
+    const [k, i, j] = c.split('/').map(Number), s = CELL * 2 ** k * cam.z, x = i * s + cam.x, y = j * s + cam.y;
+    if (x > W || y > H || x + s < 0 || y + s < 0) continue;
+    lctx.fillRect(x, y, s, s);
+    lctx.strokeRect(x, y, s, s);
+  }
+}
+function startPicking() {
+  picking = { cells: new Set(), level: 0 };
+  setSelection([]);
+  $('#picker').hidden = false;
+  $('#pick-done').disabled = true;
+  $('#pick-done').textContent = 'Create link';
+  schedule(false);
+}
+function endPicking() {
+  picking = null;
+  $('#picker').hidden = true;
+  schedule(false);
+}
+const shareUrl = (token) => `${location.origin}/note?share=${token}`;
+const copyLink = (url) => navigator.clipboard?.writeText(url).then(() => toast('Link copied.'), () => {});
+async function openShare(made) {
+  closeMenu();
+  $('#share-menu').hidden = false;
+  $('#sh-new').hidden = !made;
+  if (made) $('#sh-link').value = shareUrl(made.token);
+  try {
+    const { shares } = await api(`${notePath}/shares`);
+    $('#sh-none').hidden = shares.length > 0;
+    $('#sh-list').replaceChildren(...shares.reverse().map((s) => {
+      const li = document.createElement('li'), what = document.createElement('span');
+      what.textContent = `${s.mode === 'write' ? 'Can edit' : 'Can view'} · ${s.area === '*' ? 'whole canvas' : s.area.length === 1 ? '1 square' : `${s.area.length} squares`}`;
+      const btn = (label, fn) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn quiet'; b.textContent = label; b.onclick = fn; return b; };
+      li.append(what, btn('Copy', () => copyLink(shareUrl(s.token))), btn('Turn off', async () => {
+        try { await api(`${notePath}/shares/${s.token}`, { method: 'DELETE' }); openShare(); } catch (e) { toast(e.message); }
+      }));
+      return li;
+    }));
+  } catch (e) { toast(e.message); }
+}
+async function createShare(area) {
+  try {
+    const { share: s } = await api(`${notePath}/shares`, { method: 'POST', body: { mode: $('input[name=sh-mode]:checked').value, area } });
+    await openShare(s);
+    copyLink(shareUrl(s.token));
+  } catch (e) { toast(e.message); }
+}
+$('#share-open').onclick = () => openShare();
+$('#sh-create').onclick = () => {
+  if ($('input[name=sh-area]:checked').value === '*') return createShare('*');
+  $('#share-menu').hidden = true;
+  startPicking();
+};
+$('#sh-copy').onclick = () => copyLink($('#sh-link').value);
+$('#pick-cancel').onclick = endPicking;
+$('#pick-done').onclick = () => { const cells = [...picking.cells]; endPicking(); createShare(cells); };
+addEventListener('pointerdown', (e) => {
+  if (!$('#share-menu').hidden && !e.target.closest?.('#share-menu, #menu')) $('#share-menu').hidden = true;
+}, true);
+// the squares a link can edit, in view when it first opens on this device
+function fitCells(cells) {
+  const b = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
+  for (const c of cells) {
+    const [k, i, j] = c.split('/').map(Number), s = CELL * 2 ** k;
+    b.x0 = Math.min(b.x0, i * s); b.y0 = Math.min(b.y0, j * s); b.x1 = Math.max(b.x1, (i + 1) * s); b.y1 = Math.max(b.y1, (j + 1) * s);
+  }
+  const z = Math.max(0.1, Math.min(2, 0.8 * Math.min(board.clientWidth / (b.x1 - b.x0), board.clientHeight / (b.y1 - b.y0))));
+  cam = { z, x: board.clientWidth / 2 - ((b.x0 + b.x1) / 2) * z, y: board.clientHeight / 2 - ((b.y0 + b.y1) / 2) * z };
+  camChanged();
+}
 
 // back to the canvas this one was opened from
 function showTrail() {
@@ -1745,7 +1943,7 @@ function reveal() {
 
 /* ---------- start ---------- */
 async function start() {
-  if (!noteId) { location.replace('/'); return; }
+  if (!noteId && !shareToken) { location.replace('/'); return; }
   reveal();
   readPalette();
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { readPalette(); schedule(true); });
@@ -1756,11 +1954,19 @@ async function start() {
   try { arrived = sessionStorage.getItem('sl8:arrive') === '1'; sessionStorage.removeItem('sl8:arrive'); } catch {}
   if (arrived) board.animate([{ transform: 'scale(.35)', opacity: 0 }, { transform: 'scale(1)', opacity: 1 }], { duration: 340, easing: 'cubic-bezier(.2,.8,.2,1)' });
   try {
-    const [{ note, items: list }, { notes }] = await Promise.all([
-      api(`/api/notes/${noteId}`),
-      api('/api/notes').catch(() => ({ notes: [] })), // titles for portals; portals show "deleted" without them
+    const [{ note, items: list, now, share: linked }, { notes }] = await Promise.all([
+      api(notePath),
+      shareToken ? { notes: [] } : api('/api/notes').catch(() => ({ notes: [] })), // titles for portals; portals show "deleted" without them
     ]);
     for (const n of notes) canvasTitles.set(n.id, n.title);
+    if (linked) { // opened from a link: only what it allows
+      share = linked;
+      document.documentElement.dataset.share = share.mode; // hides account features (and every tool, for view links)
+      if (share.mode === 'read') $('#hint').textContent = 'Nothing has been written here yet.';
+      titleEl.readOnly = true;
+      setTool(tool.name);
+      if (share.area !== '*' && !store.get('sl8:cam:' + canvasKey)) fitCells(share.area);
+    }
     look = note.style || {};
     applyLook();
     readPalette();
@@ -1769,9 +1975,11 @@ async function start() {
     document.title = note.title + ' · ThinkSL8';
     for (const it of list) apply(it.id, it, false);
     for (const [id, it] of store.get(pendingKey) || []) apply(id, it); // changes that never reached the server
-    setStatus(pending.size ? 'Saving…' : 'Saved');
+    setStatus(share?.mode === 'read' ? 'View only' : pending.size ? 'Saving…' : 'Saved');
     updateHint();
-    showTrail();
+    if (!shareToken) showTrail();
+    since = now;
+    poll();
     try { if (sessionStorage.getItem('sl8:tour')) { sessionStorage.removeItem('sl8:tour'); tour(); } } catch {} // chosen during setup
     schedule(true);
     const target = location.hash.match(/^#item-([\w-]+)$/)?.[1];
@@ -1781,7 +1989,7 @@ async function start() {
   } catch (e) {
     if (e.status === 401) return location.replace('/');
     setStatus(e.status === 404 ? 'Not found' : 'Could not load', 'error');
-    toast(e.status === 404 ? 'This canvas does not exist or belongs to another account.' : e.message);
+    toast(e.status === 404 && !shareToken ? 'This canvas does not exist or belongs to another account.' : e.message);
   }
 }
 start();

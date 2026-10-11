@@ -113,6 +113,32 @@ function validItem(it) {
   return false;
 }
 
+/* Dot-grid containers. Level k cells are CELL * 2^k world units square, aligned to the canvas origin, so each one splits
+   into four at level k - 1. Id "k/col/row". An item belongs to the container its first point is in (anchor), and a
+   container holds everything in its sub-containers. A share's area is '*' (whole canvas) or a list of containers. */
+const CELL = 24, MAX_AREA = 400, AREA = /^(-?\d{1,2})\/(-?\d{1,16})\/(-?\d{1,16})$/;
+function cleanArea(v) {
+  if (v === '*') return '*';
+  if (!Array.isArray(v) || !v.length || v.length > MAX_AREA) return null;
+  const out = new Set();
+  for (const c of v) {
+    const m = typeof c === 'string' && c.match(AREA);
+    if (!m || m[1] < -4 || m[1] > 40) return null;
+    out.add(m.slice(1).map(Number).join('/'));
+  }
+  return [...out];
+}
+const anchor = (it) => (it.kind === 'stroke' ? [it.p?.[0], it.p?.[1]] : [it.x, it.y]);
+const inArea = (area, [x, y]) => area === '*' || (Number.isFinite(x) && Number.isFinite(y) &&
+  area.some(([k, i, j]) => { const s = CELL * 2 ** k; return Math.floor(x / s) === i && Math.floor(y / s) === j; }));
+// whether an item shows in an area: arrows need both ends in it
+function shown(area, byId, it) {
+  if (area === '*') return true;
+  const placed = (x) => x && x.kind !== 'conn' && inArea(area, anchor(x));
+  return it.kind === 'conn' ? placed(byId.get(it.a)) && placed(byId.get(it.b)) : placed(it);
+}
+const TOMB_DAYS = 1; // a device away longer than this reloads the whole canvas instead of catching up
+
 // A canvas's look. Unknown keys and bad values are dropped.
 const THEMES = ['light', 'dark', 'paper', 'blueprint', 'chalk'];
 const PATTERNS = ['dots', 'grid', 'lines', 'graph', 'iso', 'plain'];
@@ -225,6 +251,128 @@ async function logo(req, env, url, path) {
   return new Response(png, { headers: { ...forever, 'content-type': 'image/png' } });
 }
 
+async function serveFile(req, env, userId, id) {
+  const { value, metadata } = await env.FILES.getWithMetadata(fileKey(userId, id), 'arrayBuffer');
+  if (!value) return fail(404, 'File not found.');
+  const headers = {
+    'content-type': metadata?.type || 'application/octet-stream', 'cache-control': 'private, max-age=31536000, immutable',
+    'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'", 'accept-ranges': 'bytes',
+  };
+  // byte ranges, so videos can seek
+  const range = (req.headers.get('range') || '').match(/^bytes=(\d*)-(\d*)$/), size = value.byteLength;
+  if (range && (range[1] || range[2])) {
+    const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+    const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    if (start >= size || start > end) return new Response(null, { status: 416, headers: { 'content-range': `bytes */${size}` } });
+    return new Response(value.slice(start, end + 1), { status: 206, headers: { ...headers, 'content-range': `bytes ${start}-${end}/${size}` } });
+  }
+  return new Response(value, { headers });
+}
+
+// ponytail: shared links read the whole canvas to check areas; index anchors in columns if canvases get huge
+async function loadItems(env, noteId) {
+  const { results } = await env.DB.prepare('SELECT data, updated_at FROM items WHERE note_id = ? ORDER BY t, id').bind(noteId).all();
+  return results.map((r) => ({ it: JSON.parse(r.data), data: r.data, at: r.updated_at }));
+}
+
+// Apply a batch of puts and deletes. With a share, only changes inside its area count; the rest come back as `rejected`.
+async function saveOps(env, noteId, list, share) {
+  if (!Array.isArray(list) || list.length > MAX_OPS) return fail(400, `Send between 0 and ${MAX_OPS} changes at a time.`);
+  let puts = [], dels = [];
+  for (const op of list) {
+    if (op && typeof op.del === 'string' && ID.test(op.del)) dels.push(op.del);
+    else if (op && validItem(op.put)) {
+      const data = JSON.stringify(op.put);
+      if (data.length > MAX_ITEM_BYTES) return fail(413, 'One stroke or text box is too large to save.');
+      puts.push([op.put, data]);
+    } else return fail(400, 'One of the changes was malformed.');
+  }
+  const rejected = [];
+  if (share) {
+    const prev = new Map((await loadItems(env, noteId)).map((r) => [r.it.id, r.it]));
+    const next = new Map(prev);
+    for (const [it] of puts) next.set(it.id, it);
+    const ok = (it) => shown(share.area, next, it), was = (it) => !it || shown(share.area, prev, it);
+    puts = puts.filter(([it]) => {
+      const p = prev.get(it.id);
+      // links can't add photos, videos or portals (those point at the owner's files and canvases), only move them
+      const fixed = !['image', 'video', 'portal'].includes(it.kind) || (p?.kind === it.kind && p.file === it.file && p.target === it.target);
+      if (ok(it) && was(p) && fixed) return true;
+      rejected.push(it.id);
+      return false;
+    });
+    dels = dels.filter((id) => {
+      if (was(prev.get(id))) return true;
+      rejected.push(id);
+      return false;
+    });
+  }
+  const now = Date.now();
+  const stmts = puts.map(([it, data]) => env.DB.prepare(
+    'INSERT INTO items (note_id, id, t, data, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (note_id, id) DO UPDATE SET t = excluded.t, data = excluded.data, updated_at = excluded.updated_at'
+  ).bind(noteId, it.id, it.t, data, now));
+  if (dels.length) { // one statement each for any number of deletes, keeping under D1's per-request query limit
+    const ids = JSON.stringify(dels);
+    stmts.push(env.DB.prepare('DELETE FROM items WHERE note_id = ? AND id IN (SELECT value FROM json_each(?))').bind(noteId, ids));
+    stmts.push(env.DB.prepare(
+      'INSERT INTO tombstones (note_id, id, at) SELECT ?, value, ? FROM json_each(?) WHERE true ON CONFLICT (note_id, id) DO UPDATE SET at = excluded.at'
+    ).bind(noteId, now, ids));
+    if (Math.random() < 0.02) stmts.push(env.DB.prepare('DELETE FROM tombstones WHERE at < ?').bind(now - 2 * TOMB_DAYS * 864e5));
+  }
+  stmts.push(env.DB.prepare('UPDATE notes SET updated_at = ? WHERE id = ?').bind(now, noteId));
+  await env.DB.batch(stmts);
+  return json(rejected.length ? { ok: true, rejected } : { ok: true });
+}
+
+// What changed since a time another device last asked: changed items and deleted ids.
+async function changes(env, noteId, since, area) {
+  const now = Date.now();
+  if (now - since > TOMB_DAYS * 864e5) return json({ now, reload: true });
+  const after = since - 5000; // a write from another Worker instance can land a moment after its timestamp
+  if (area !== '*') { // items that left the area count as deleted for this link
+    const rows = await loadItems(env, noteId), byId = new Map(rows.map((r) => [r.it.id, r.it]));
+    const { results } = await env.DB.prepare('SELECT id FROM tombstones WHERE note_id = ? AND at > ?').bind(noteId, after).all();
+    const changed = rows.filter((r) => r.at > after), vis = changed.filter((r) => shown(area, byId, r.it));
+    const gone = [...results.map((r) => r.id).filter((id) => !byId.has(id)), ...changed.filter((r) => !vis.includes(r)).map((r) => r.it.id)];
+    return json(`{"now":${now},"gone":${JSON.stringify(gone)},"items":[${vis.map((r) => r.data).join(',')}]}`);
+  }
+  const [{ results: rows }, { results: gone }] = await env.DB.batch([
+    env.DB.prepare('SELECT data FROM items WHERE note_id = ? AND updated_at > ?').bind(noteId, after),
+    env.DB.prepare('SELECT id FROM tombstones t WHERE note_id = ? AND at > ? AND NOT EXISTS (SELECT 1 FROM items i WHERE i.note_id = t.note_id AND i.id = t.id)').bind(noteId, after),
+  ]);
+  return json(`{"now":${now},"gone":${JSON.stringify(gone.map((r) => r.id))},"items":[${rows.map((r) => r.data).join(',')}]}`);
+}
+
+// Someone opening a share link. No account needed: the link is the key.
+async function shared(req, env, url, token, ops, fileId, body) {
+  const row = await env.DB.prepare('SELECT s.note_id, s.mode, s.area, n.user_id, n.title FROM shares s JOIN notes n ON n.id = s.note_id WHERE s.token = ?').bind(token).first();
+  if (!row) return fail(404, 'This link was turned off, or the canvas was deleted.');
+  const area = row.area === '*' ? '*' : JSON.parse(row.area).map((c) => c.split('/').map(Number));
+  const method = req.method;
+  if (ops) {
+    if (method !== 'POST') return fail(404, 'Not found.');
+    if (row.mode !== 'write') return fail(403, 'This link can view only.');
+    return saveOps(env, row.note_id, body.ops, { area });
+  }
+  if (method !== 'GET') return fail(404, 'Not found.');
+  if (fileId) {
+    // only files this link can see: the background, or a photo or video in its area
+    const [style, rows] = await Promise.all([
+      env.DB.prepare('SELECT style FROM canvas_style WHERE note_id = ?').bind(row.note_id).first('style'), loadItems(env, row.note_id)]);
+    const byId = new Map(rows.map((r) => [r.it.id, r.it]));
+    const used = JSON.parse(style || '{}').image === fileId || rows.some((r) => r.it.file === fileId && shown(area, byId, r.it));
+    return used ? serveFile(req, env, row.user_id, fileId) : fail(404, 'File not found.');
+  }
+  const since = Number(url.searchParams.get('since'));
+  if (since) return changes(env, row.note_id, since, area);
+  const [style, rows] = await Promise.all([
+    env.DB.prepare('SELECT style FROM canvas_style WHERE note_id = ?').bind(row.note_id).first('style'), loadItems(env, row.note_id)]);
+  const byId = new Map(rows.map((r) => [r.it.id, r.it]));
+  const note = { title: row.title, style: JSON.parse(style || '{}') };
+  const share = { mode: row.mode, area: row.area === '*' ? '*' : JSON.parse(row.area) };
+  return json(`{"now":${Date.now()},"note":${JSON.stringify(note)},"share":${JSON.stringify(share)},"items":[${rows.filter((r) => shown(area, byId, r.it)).map((r) => r.data).join(',')}]}`);
+}
+
 async function api(req, env, ctx, url) {
   const path = url.pathname;
   const method = req.method;
@@ -315,6 +463,9 @@ async function api(req, env, ctx, url) {
     return startSession(env, row.id, row.email);
   }
 
+  const sh = path.match(/^\/api\/shared\/([a-f0-9]{64})(?:(\/ops)|\/files\/([0-9a-f-]{36}))?$/);
+  if (sh) return shared(req, env, url, sh[1], sh[2], sh[3], body);
+
   const user = await currentUser(req, env);
   if (!user) return fail(401, 'Log in to continue.');
 
@@ -343,7 +494,7 @@ async function api(req, env, ctx, url) {
     const mine = 'SELECT id FROM notes WHERE user_id = ?';
     await env.DB.batch([
       env.DB.prepare(`DELETE FROM items WHERE note_id IN (${mine})`).bind(user.id),
-      env.DB.prepare(`DELETE FROM canvas_style WHERE note_id IN (${mine})`).bind(user.id),
+      ...['canvas_style', 'shares', 'tombstones'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE note_id IN (${mine})`).bind(user.id)),
       ...['notes', 'ai_connections', 'ai_usage', 'resets', 'sessions'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(user.id)),
       env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id),
     ]);
@@ -371,23 +522,7 @@ async function api(req, env, ctx, url) {
   }
 
   const file = path.match(/^\/api\/files\/([0-9a-f-]{36})$/);
-  if (file && method === 'GET') {
-    const { value, metadata } = await env.FILES.getWithMetadata(fileKey(user.id, file[1]), 'arrayBuffer');
-    if (!value) return fail(404, 'File not found.');
-    const headers = {
-      'content-type': metadata?.type || 'application/octet-stream', 'cache-control': 'private, max-age=31536000, immutable',
-      'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'", 'accept-ranges': 'bytes',
-    };
-    // byte ranges, so videos can seek
-    const range = (req.headers.get('range') || '').match(/^bytes=(\d*)-(\d*)$/), size = value.byteLength;
-    if (range && (range[1] || range[2])) {
-      const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
-      const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
-      if (start >= size || start > end) return new Response(null, { status: 416, headers: { 'content-range': `bytes */${size}` } });
-      return new Response(value.slice(start, end + 1), { status: 206, headers: { ...headers, 'content-range': `bytes ${start}-${end}/${size}` } });
-    }
-    return new Response(value, { headers });
-  }
+  if (file && method === 'GET') return serveFile(req, env, user.id, file[1]);
 
   if (path === '/api/export' && method === 'GET') {
     const [{ results: notes }, { results: rows }, acct] = await Promise.all([
@@ -460,42 +595,46 @@ async function api(req, env, ctx, url) {
     }
   }
 
-  const m = path.match(/^\/api\/notes\/([\w-]{1,64})(\/ops)?$/);
+  const m = path.match(/^\/api\/notes\/([\w-]{1,64})(?:(\/ops)|(\/shares)(?:\/([a-f0-9]{64}))?)?$/);
   if (m) {
-    const [, noteId, ops] = m;
+    const [, noteId, ops, shares, token] = m;
     const note = await env.DB.prepare('SELECT id, title, updated_at FROM notes WHERE id = ? AND user_id = ?')
       .bind(noteId, user.id).first();
     if (!note) return fail(404, 'Note not found.');
 
-    if (ops && method === 'POST') {
-      const list = Array.isArray(body.ops) ? body.ops : null;
-      if (!list || list.length > MAX_OPS) return fail(400, `Send between 0 and ${MAX_OPS} changes at a time.`);
-      const stmts = [];
-      for (const op of list) {
-        if (op && typeof op.del === 'string' && ID.test(op.del)) {
-          stmts.push(env.DB.prepare('DELETE FROM items WHERE note_id = ? AND id = ?').bind(noteId, op.del));
-        } else if (op && validItem(op.put)) {
-          const data = JSON.stringify(op.put);
-          if (data.length > MAX_ITEM_BYTES) return fail(413, 'One stroke or text box is too large to save.');
-          stmts.push(env.DB.prepare(
-            'INSERT INTO items (note_id, id, t, data, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (note_id, id) DO UPDATE SET t = excluded.t, data = excluded.data, updated_at = excluded.updated_at'
-          ).bind(noteId, op.put.id, op.put.t, data, Date.now()));
-        } else {
-          return fail(400, 'One of the changes was malformed.');
-        }
+    if (ops && method === 'POST') return saveOps(env, noteId, body.ops);
+
+    if (shares) {
+      if (token && method === 'DELETE') {
+        await env.DB.prepare('DELETE FROM shares WHERE token = ? AND note_id = ?').bind(token, noteId).run();
+        return json({ ok: true });
       }
-      stmts.push(env.DB.prepare('UPDATE notes SET updated_at = ? WHERE id = ?').bind(Date.now(), noteId));
-      await env.DB.batch(stmts);
-      return json({ ok: true });
+      if (!token && method === 'GET') {
+        const { results } = await env.DB.prepare('SELECT token, mode, area, created_at FROM shares WHERE note_id = ? ORDER BY created_at').bind(noteId).all();
+        return json({ shares: results.map((s) => ({ ...s, area: s.area === '*' ? '*' : JSON.parse(s.area) })) });
+      }
+      if (!token && method === 'POST') {
+        const area = cleanArea(body.area);
+        if (!area) return fail(400, `Choose the whole canvas or between 1 and ${MAX_AREA} squares.`);
+        if (body.mode !== 'read' && body.mode !== 'write') return fail(400, 'Choose view or edit.');
+        const n = await env.DB.prepare('SELECT count(*) AS n FROM shares WHERE note_id = ?').bind(noteId).first('n');
+        if (n >= 50) return fail(409, 'This canvas has 50 links. Turn some off to make more.');
+        const s = { token: hex(crypto.getRandomValues(new Uint8Array(32))), mode: body.mode, area, created_at: Date.now() };
+        await env.DB.prepare('INSERT INTO shares VALUES (?, ?, ?, ?, ?)').bind(s.token, noteId, s.mode, area === '*' ? '*' : JSON.stringify(area), s.created_at).run();
+        return json({ share: s }, 201);
+      }
+      return fail(404, 'Not found.');
     }
 
     if (!ops && method === 'GET') {
+      const since = Number(url.searchParams.get('since'));
+      if (since) return changes(env, noteId, since, '*');
       const [{ results }, style] = await Promise.all([
         env.DB.prepare('SELECT data FROM items WHERE note_id = ? ORDER BY t, id').bind(noteId).all(),
         env.DB.prepare('SELECT style FROM canvas_style WHERE note_id = ?').bind(noteId).first('style'),
       ]);
       // items are stored as JSON already; splice them in without re-parsing
-      return json(`{"note":${JSON.stringify({ ...note, style: JSON.parse(style || '{}') })},"items":[${results.map((r) => r.data).join(',')}]}`);
+      return json(`{"now":${Date.now()},"note":${JSON.stringify({ ...note, style: JSON.parse(style || '{}') })},"items":[${results.map((r) => r.data).join(',')}]}`);
     }
 
     if (!ops && method === 'PATCH') {
@@ -515,7 +654,7 @@ async function api(req, env, ctx, url) {
 
     if (!ops && method === 'DELETE') {
       await env.DB.batch([
-        env.DB.prepare('DELETE FROM canvas_style WHERE note_id = ?').bind(noteId),
+        ...['canvas_style', 'shares', 'tombstones'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE note_id = ?`).bind(noteId)),
         env.DB.prepare('DELETE FROM items WHERE note_id = ?').bind(noteId),
         env.DB.prepare('DELETE FROM notes WHERE id = ?').bind(noteId),
       ]);
