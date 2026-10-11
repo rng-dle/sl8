@@ -1,6 +1,7 @@
 # Browser run of the v1 journey against `wrangler dev` + test/fake-provider.mjs.
 # python3 test/journey.py [base-url] [screenshot-dir]
 import random, sys
+RUN_IP = {"cf-connecting-ip": "10.%d.%d.%d" % tuple(random.randint(1, 250) for _ in range(3))}  # own address for rate limits
 from playwright.sync_api import sync_playwright
 
 B = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8787"
@@ -13,7 +14,7 @@ def ok(cond, name, extra=""):
 
 with sync_playwright() as p:
     br = p.chromium.launch()
-    ctx = br.new_context(viewport={"width": 1280, "height": 820}, device_scale_factor=1)
+    ctx = br.new_context(extra_http_headers=RUN_IP, viewport={"width": 1280, "height": 820}, device_scale_factor=1)
     pg = ctx.new_page()
     errors = []
     pg.on("pageerror", lambda e: errors.append(str(e)))
@@ -120,8 +121,38 @@ with sync_playwright() as p:
     ok(True, "logging in opens the last canvas directly")
     pg.wait_for_selector(".reveal", state="detached", timeout=3000)
 
+    # search from the canvases page
+    pg.goto(B + "/canvases")
+    pg.fill("#q", "studen")
+    pg.wait_for_selector("#results li")
+    ok("$9" in pg.text_content("#results") and pg.locator("#results mark").count() >= 1, "search finds a note by part of a word and highlights it")
+    pg.screenshot(path=f"{OUT}/11-search-dark.png")
+    pg.click("#results li a >> nth=0")
+    pg.wait_for_url("**/note?id=*#item-*")
+    pg.wait_for_selector("#status:text('Saved')")
+    ok(True, "a search result opens the canvas at that note")
+
+    # forgot password, by email, in the browser
+    pg.goto(B + "/settings")
+    pg.click("#logout")
+    pg.wait_for_selector("#auth:not([hidden])")
+    pg.click("#forgot")
+    pg.fill("#email", email)
+    pg.click("#ask-btn")
+    pg.wait_for_selector("#asked:not([hidden])")
+    pg.screenshot(path=f"{OUT}/12-reset-sent-dark.png")
+    import json, urllib.request
+    mails = json.load(urllib.request.urlopen("http://127.0.0.1:8788/__emails?to=" + email))
+    link = mails[-1]["text"].split("\n")[3]
+    pg.goto(link)
+    ok(pg.url.endswith("/reset"), "the reset token is removed from the address bar")
+    pg.fill("#password", "newpassword9")
+    pg.click("#set-btn")
+    pg.wait_for_url("**/note?id=*")
+    ok(True, "choosing a new password signs straight back in")
+
     # phone, dark
-    m = br.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, has_touch=True, is_mobile=True, storage_state=ctx.storage_state())
+    m = br.new_context(extra_http_headers=RUN_IP, viewport={"width": 390, "height": 844}, device_scale_factor=2, has_touch=True, is_mobile=True, storage_state=ctx.storage_state())
     mp = m.new_page()
     mp.goto(pg.url)
     mp.wait_for_selector("#status:text('Saved')")

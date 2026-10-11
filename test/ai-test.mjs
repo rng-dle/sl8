@@ -6,10 +6,11 @@ let failed = 0;
 const ok = (cond, name, extra = '') => { console.log(`${cond ? 'ok  ' : 'FAIL'} - ${name}${!cond && extra ? `\n       ${extra}` : ''}`); if (!cond) failed++; };
 const sql = (q) => JSON.parse(execSync(`npx wrangler d1 execute sl8-db --local --json --command "${q}"`, { stdio: ['ignore', 'pipe', 'ignore'] }).toString())[0].results;
 
+const RUN_IP = `10.${(Math.random() * 250) | 0}.${(Math.random() * 250) | 0}.${(Math.random() * 250) | 0}`; // this run's own address for rate limits
 class Client {
   jar = new Map();
   async req(path, { method = 'GET', body, follow = true } = {}) {
-    const headers = { cookie: [...this.jar].map(([k, v]) => `${k}=${v}`).join('; ') };
+    const headers = { cookie: [...this.jar].map(([k, v]) => `${k}=${v}`).join('; '), 'cf-connecting-ip': RUN_IP };
     if (method !== 'GET') headers['content-type'] = 'application/json';
     const res = await fetch(B + path, { method, headers, body: method === 'GET' ? undefined : JSON.stringify(body || {}), redirect: follow ? 'follow' : 'manual' });
     for (const c of res.headers.getSetCookie()) {

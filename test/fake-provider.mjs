@@ -1,4 +1,4 @@
-// Local stand-in for OpenRouter / OpenAI / Anthropic / Gemini, used only by tests via AI_TEST_BASE.
+// Local stand-in for OpenRouter / OpenAI / Anthropic / Gemini and Resend, used only by tests via TEST_BASE.
 // Keys steer behaviour: "...revoked..." -> 401, "...broke..." -> 402, "...bad..." -> rejected at connect.
 import { createServer } from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
@@ -6,6 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 const PORT = Number(process.env.PORT || 8788);
 const challenges = new Map(); // code -> code_challenge
 const revokedKeys = new Set(); // keys revoked "on the provider's side" after connecting
+const emails = [];
 const b64url = (b) => b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 const keyOf = (req) => (req.headers.authorization || '').replace(/^Bearer /, '') || req.headers['x-api-key'] || '';
@@ -45,6 +46,9 @@ createServer(async (req, res) => {
     return send(res, 200, { key: 'sk-or-v1-oauth-' + randomUUID().slice(0, 8) });
   }
   if (url.pathname === '/__revoke') { revokedKeys.add((await readBody(req)).key); return send(res, 200, {}); }
+  // stand-in for Resend: keep emails so tests can read the reset link
+  if (url.pathname === '/resend/emails' && req.method === 'POST') { const m = await readBody(req); m.at = Date.now(); emails.push(m); return send(res, 200, { id: randomUUID() }); }
+  if (url.pathname === '/__emails') return send(res, 200, emails.filter((m) => m.to.includes(url.searchParams.get('to'))));
   if (key.includes('revoked') || revokedKeys.has(key)) return send(res, 401, { error: { message: 'Key revoked' } });
   if (key.includes('bad')) return send(res, 401, { error: { message: 'Invalid key' } });
   if (path === '/models' && req.method === 'GET') return send(res, 200, { data: MODELS[p] || [] });

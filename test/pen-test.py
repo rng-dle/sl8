@@ -1,13 +1,14 @@
 # Regression check for palm rejection: a resting palm must not block or cancel S Pen strokes.
 # Run with `npx wrangler dev` going: python3 test/pen-test.py [base-url]
 import random, sys
+RUN_IP = {"cf-connecting-ip": "10.%d.%d.%d" % tuple(random.randint(1, 250) for _ in range(3))}  # own address for rate limits
 from playwright.sync_api import sync_playwright
 
 B = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8787"
 
 with sync_playwright() as p:
     br = p.chromium.launch()
-    pg = br.new_context(viewport={"width": 412, "height": 900}, has_touch=True).new_page()
+    pg = br.new_context(extra_http_headers=RUN_IP, viewport={"width": 412, "height": 900}, has_touch=True).new_page()
     pg.goto(B + "/")
     pg.click("#tab-signup")
     pg.fill("#email", f"pen{random.randint(1, 99999)}@example.com")
