@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Canvases · ThinkSL8</title>
+<script>try{var t=JSON.parse(localStorage.getItem('sl8:theme'));if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/style.css">
+<style>
+  .head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 16px; margin: 32px 0 12px; }
+  .head h1 { margin: 0; font: 400 clamp(32px, 6vw, 44px)/1.05 var(--font-display); }
+  .head h1 small { font: 500 15px var(--font-ui); color: var(--muted); margin-left: 8px; font-variant-numeric: tabular-nums; }
+  .notes { margin: 0; padding: 0; list-style: none; }
+  .notes li { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); }
+  .notes a { flex: 1; min-width: 0; display: grid; gap: 2px; padding: 16px 4px; color: var(--text); text-decoration: none; }
+  .notes a:hover .t { color: var(--accent); }
+  .notes .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 21px/1.25 var(--font-display); }
+  .notes .d { font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .del { flex: none; color: var(--muted); }
+  .del.confirm { width: auto; padding: 0 12px; background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); font-size: 14px; font-weight: 600; }
+  .empty { padding: 48px 0; color: var(--muted); max-width: 44ch; }
+  .empty b { display: block; font: 400 24px/1.2 var(--font-display); color: var(--text); margin-bottom: 6px; }
+</style>
+</head>
+<body>
+<main class="page">
+  <header class="page-top">
+    <a class="wordmark" href="/">Think<b>SL8</b></a>
+    <a class="btn quiet" href="/settings">Settings</a>
+  </header>
+  <div class="head">
+    <h1>Canvases<small id="count"></small></h1>
+    <button class="btn primary" id="new" type="button">New canvas</button>
+  </div>
+  <p class="empty" id="loading">Loading…</p>
+  <ul class="notes" id="notes"></ul>
+  <p class="empty" id="empty" hidden><b>No canvases yet</b>Each canvas is an endless page. Start one and write, draw or type anywhere on it.</p>
+</main>
+<div id="toast" class="toast" role="alert" hidden></div>
+<script src="/common.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
+function ago(ms) {
+  const s = (ms - Date.now()) / 1000;
+  for (const [unit, n] of [['year', 31536000], ['month', 2592000], ['week', 604800], ['day', 86400], ['hour', 3600], ['minute', 60]]) {
+    if (Math.abs(s) >= n) return rtf.format(Math.round(s / n), unit);
+  }
+  return 'just now';
+}
+
+let current = [];
+function render() {
+  $('#loading').hidden = true;
+  $('#count').textContent = current.length ? String(current.length) : '';
+  $('#empty').hidden = current.length > 0;
+  $('#notes').replaceChildren(...current.map((n) => {
+    const li = document.createElement('li');
+    const a = document.createElement('a');
+    a.href = '/note?id=' + encodeURIComponent(n.id);
+    const t = document.createElement('span'); t.className = 't'; t.textContent = n.title;
+    const d = document.createElement('span'); d.className = 'd'; d.textContent = 'Edited ' + ago(n.updated_at);
+    a.append(t, d);
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.className = 'icon-btn del';
+    del.setAttribute('aria-label', 'Delete ' + n.title);
+    del.innerHTML = '<svg viewBox="0 0 24 24"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>';
+    let timer;
+    del.onclick = async () => {
+      if (!del.classList.contains('confirm')) {
+        del.classList.add('confirm');
+        del.textContent = 'Delete canvas';
+        timer = setTimeout(render, 4000);
+        return;
+      }
+      clearTimeout(timer);
+      del.disabled = true;
+      try {
+        await api('/api/notes/' + encodeURIComponent(n.id), { method: 'DELETE' });
+        current = current.filter((x) => x.id !== n.id);
+      } catch (err) {
+        toast(err.message);
+      }
+      render();
+    };
+    li.append(a, del);
+    return li;
+  }));
+}
+
+$('#new').onclick = async () => {
+  $('#new').disabled = true;
+  try {
+    const { note } = await api('/api/notes', { method: 'POST', body: { title: 'Untitled' } });
+    location.href = '/note?id=' + encodeURIComponent(note.id);
+  } catch (err) {
+    toast(err.message);
+    $('#new').disabled = false;
+  }
+};
+
+addEventListener('pageshow', (e) => e.persisted && load());
+async function load() {
+  try {
+    current = (await api('/api/notes')).notes;
+    render();
+  } catch (err) {
+    if (err.status === 401) return location.replace('/');
+    toast(err.message);
+  }
+}
+load();
+</script>
+</body>
+</html>

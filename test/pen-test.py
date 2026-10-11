@@ -1,5 +1,5 @@
 # Regression check for palm rejection: a resting palm must not block or cancel S Pen strokes.
-# Run with `npx wrangler dev` going: python3 pen-test.py [base-url]
+# Run with `npx wrangler dev` going: python3 test/pen-test.py [base-url]
 import random, sys
 from playwright.sync_api import sync_playwright
 
@@ -13,8 +13,10 @@ with sync_playwright() as p:
     pg.fill("#email", f"pen{random.randint(1, 99999)}@example.com")
     pg.fill("#password", "correcthorse")
     pg.click("#submit")
-    pg.click("#new")
+    pg.wait_for_url("**/welcome")
+    pg.click("#skip-all")
     pg.wait_for_selector("#status:text('Saved')")
+    pg.click("[data-tool=pen]")
     cdp = pg.context.new_cdp_session(pg)
 
     def pen(kind, x, y, buttons=1):
@@ -56,6 +58,15 @@ with sync_playwright() as p:
         palm("touchMove", 200, 600 - i * 20)
     palm("touchEnd")
     cam2 = pg.evaluate("cam")
+
+    # 4. with "Draw with finger" switched on, a finger draws again
+    pg.evaluate("document.querySelector('#finger').click()")
+    palm("touchStart", 100, 500)
+    for i in range(1, 8):
+        palm("touchMove", 100 + i * 15, 500)
+    palm("touchEnd")
+    c = pg.evaluate("[...items.values()].filter(i => i.kind === 'stroke').length")
+    cam3 = pg.evaluate("cam")
     br.close()
 
 full = lambda s: len(s["p"]) >= 19 * 3 and s["pr"] is True  # whole pen stroke, with pressure
@@ -67,4 +78,6 @@ print(("ok  " if ok2 else "FAIL") + " - palm landing mid-stroke does not cut the
 ok4 = cam2["y"] == 96 - 100
 print(("ok  " if ok3 else "FAIL") + f" - palm did not move the page (camera {cam})")
 print(("ok  " if ok4 else "FAIL") + f" - finger pans once the pen is away (camera {cam2})")
-sys.exit(0 if ok1 and ok2 and ok3 and ok4 else 1)
+ok5 = c == 3 and cam3 == cam2
+print(("ok  " if ok5 else "FAIL") + f" - finger draws after turning on Draw with finger ({c} strokes)")
+sys.exit(0 if ok1 and ok2 and ok3 and ok4 and ok5 else 1)

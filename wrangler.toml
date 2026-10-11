@@ -1,7 +1,10 @@
 name = "sl8"
 main = "src/worker.js"
 compatibility_date = "2025-09-01"
-routes = [{ pattern = "sl8.nastaliq.co", custom_domain = true }]
+routes = [
+  { pattern = "thinksl8.com", custom_domain = true },
+  { pattern = "sl8.nastaliq.co", custom_domain = true },
+]
 
 [assets]
 directory = "./public"
