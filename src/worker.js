@@ -1,5 +1,18 @@
-// sl8 API: email/password accounts, per-user notes, each note a set of canvas items.
+// ThinkSL8 API: email/password accounts, per-user canvases (stored as "notes"), each a set of items, plus AI (src/ai.js).
+import { aiRoutes } from './ai.js';
+
+const OLD_HOSTS = new Set(['sl8.nastaliq.co', 'www.thinksl8.com']);
 const SESSION_DAYS = 30;
+// [x, y, width, font size, colour, text] for the optional sample canvas created during setup
+const SAMPLE = [
+  [0, 0, 560, 32, 'ink', 'Welcome to your canvas.'],
+  [0, 80, 340, 17, 'ink', 'It keeps going in every direction. Drag with two fingers, scroll, or hold Space and drag to move around. Pinch or Ctrl + scroll to zoom.'],
+  [0, 210, 340, 17, 'blue', "Double-tap (or double-click) anywhere to write a thought. It doesn't need a category, a folder or a title."],
+  [0, 340, 340, 17, 'red', 'Use Ask AI to connect your AI. Then ask things like "what did I decide about pricing?" and it answers from what you wrote, with links back to the notes it used.'],
+  [420, 80, 300, 17, 'ink', 'Pick the pen to handwrite or sketch. With a stylus, pressure shapes the line and your palm is ignored while you write.'],
+  [420, 210, 300, 17, 'green', 'Use the select tool to drag a box around things. Move them, delete them, or ask your AI about just those.'],
+  [420, 340, 300, 17, 'ink', 'This canvas is a sample. Edit it, keep it, or delete it from Canvases.'],
+];
 const MAX_OPS = 40; // ponytail: D1 free plan allows 50 queries per request; client sends ops in chunks of 40
 const MAX_ITEM_BYTES = 200_000;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -43,7 +56,7 @@ async function currentUser(req, env) {
   const token = sessionToken(req);
   if (!token) return null;
   return env.DB.prepare(
-    'SELECT u.id, u.email FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?'
+    'SELECT u.id, u.email, u.onboarded FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?'
   ).bind(await sha256(token), Date.now()).first();
 }
 
@@ -60,7 +73,7 @@ function validItem(it) {
     (it.kind === 'stroke' || it.kind === 'text') && Number.isFinite(it.t);
 }
 
-async function api(req, env, url) {
+async function api(req, env, ctx, url) {
   const path = url.pathname;
   const method = req.method;
 
@@ -114,7 +127,16 @@ async function api(req, env, url) {
   const user = await currentUser(req, env);
   if (!user) return fail(401, 'Log in to continue.');
 
-  if (path === '/api/me') return json({ email: user.email });
+  if (path === '/api/me' && method === 'GET') {
+    const last = await env.DB.prepare('SELECT id FROM notes WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1').bind(user.id).first('id');
+    return json({ email: user.email, onboarded: !!user.onboarded, lastNoteId: last || null });
+  }
+  if (path === '/api/me/onboarded' && method === 'POST') {
+    await env.DB.prepare('UPDATE users SET onboarded = 1 WHERE id = ?').bind(user.id).run();
+    return json({ ok: true });
+  }
+
+  if (path.startsWith('/api/ai')) return aiRoutes(req, env, ctx, url, user, body);
 
   if (path === '/api/notes') {
     if (method === 'GET') {
@@ -125,8 +147,16 @@ async function api(req, env, url) {
     }
     if (method === 'POST') {
       const now = Date.now();
-      const note = { id: crypto.randomUUID(), title: String(body.title || 'Untitled').slice(0, 200), updated_at: now };
-      await env.DB.prepare('INSERT INTO notes VALUES (?, ?, ?, ?, ?)').bind(note.id, user.id, note.title, now, now).run();
+      const sample = body.sample === true;
+      const note = { id: crypto.randomUUID(), title: sample ? 'Start here' : String(body.title || 'Untitled').slice(0, 200), updated_at: now };
+      const stmts = [env.DB.prepare('INSERT INTO notes VALUES (?, ?, ?, ?, ?)').bind(note.id, user.id, note.title, now, now)];
+      if (sample) {
+        SAMPLE.forEach(([x, y, w, s, c, text], i) => {
+          const it = { id: crypto.randomUUID(), kind: 'text', t: now + i, x, y, w, s, c, text };
+          stmts.push(env.DB.prepare('INSERT INTO items (note_id, id, t, data, updated_at) VALUES (?, ?, ?, ?, ?)').bind(note.id, it.id, it.t, JSON.stringify(it), now));
+        });
+      }
+      await env.DB.batch(stmts);
       return json({ note }, 201);
     }
   }
@@ -149,8 +179,8 @@ async function api(req, env, url) {
           const data = JSON.stringify(op.put);
           if (data.length > MAX_ITEM_BYTES) return fail(413, 'One stroke or text box is too large to save.');
           stmts.push(env.DB.prepare(
-            'INSERT INTO items (note_id, id, t, data) VALUES (?, ?, ?, ?) ON CONFLICT (note_id, id) DO UPDATE SET t = excluded.t, data = excluded.data'
-          ).bind(noteId, op.put.id, op.put.t, data));
+            'INSERT INTO items (note_id, id, t, data, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (note_id, id) DO UPDATE SET t = excluded.t, data = excluded.data, updated_at = excluded.updated_at'
+          ).bind(noteId, op.put.id, op.put.t, data, Date.now()));
         } else {
           return fail(400, 'One of the changes was malformed.');
         }
@@ -185,11 +215,15 @@ async function api(req, env, url) {
 }
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     const url = new URL(req.url);
-    if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(req);
+    if (!url.pathname.startsWith('/api/')) {
+      // thinksl8.com is the home; the old address forwards page visits (the API keeps answering for tabs still open there)
+      if (OLD_HOSTS.has(url.hostname)) return Response.redirect('https://thinksl8.com' + url.pathname + url.search, 301);
+      return env.ASSETS.fetch(req);
+    }
     try {
-      return await api(req, env, url);
+      return await api(req, env, ctx, url);
     } catch (e) {
       console.error(e);
       return fail(500, 'The server hit an error. Try again in a moment.');

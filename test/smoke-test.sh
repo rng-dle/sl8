@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Smoke test against a running server: `npx wrangler dev` then `bash smoke-test.sh [base-url]`
+# Smoke test against a running server: `npx wrangler dev` then `bash test/smoke-test.sh [base-url]`
 set -euo pipefail
 B=${1:-http://127.0.0.1:8787}
 J='content-type: application/json'

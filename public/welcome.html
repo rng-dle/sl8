@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Welcome · ThinkSL8</title>
+<script>try{var t=JSON.parse(localStorage.getItem('sl8:theme'));if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/style.css">
+<style>
+  main { max-width: 640px; margin: 0 auto; min-height: 100dvh; display: grid; align-content: center; gap: 24px;
+    padding-inline: 16px; padding-block: calc(env(safe-area-inset-top, 0px) + 32px) calc(env(safe-area-inset-bottom, 0px) + 32px); }
+  .step-label { margin: 0; font-size: 13px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); font-variant-numeric: tabular-nums; }
+  h1 { margin: 0; font: 400 clamp(32px, 7vw, 44px)/1.1 var(--font-display); text-wrap: balance; }
+  .lede { margin: 0; color: var(--muted); font-size: 17px; max-width: 52ch; }
+  .options { display: grid; gap: 12px; }
+  .option { display: grid; gap: 4px; padding: 18px 20px; text-align: left; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+  .option:hover, .option:focus-visible { border-color: var(--accent); }
+  .option b { font: 400 21px/1.2 var(--font-display); }
+  .option span { color: var(--muted); font-size: 15px; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .skip { background: none; border: 0; padding: 8px 0; color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
+  .small { margin: 0; font-size: 14px; color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <section id="s1" style="display:grid;gap:24px">
+    <p class="step-label">Step 1 of 2</p>
+    <h1>Where do you want to start?</h1>
+    <div class="options">
+      <button class="option" type="button" data-start="blank"><b>A blank canvas</b><span>Nothing to set up. Put your first thought anywhere.</span></button>
+      <button class="option" type="button" data-start="sample"><b>A sample canvas</b><span>A few notes that show how ThinkSL8 works. Edit or delete them whenever you like.</span></button>
+    </div>
+    <div><button class="skip" type="button" id="skip-all">Skip setup</button></div>
+  </section>
+
+  <section id="s2" hidden style="display:grid;gap:24px">
+    <p class="step-label">Step 2 of 2 · optional</p>
+    <h1>Connect your AI. Think without boundaries.</h1>
+    <p class="lede">Bring the AI you already use into your thinking space. Connect an account, choose what it can read, and ask it about your ideas.</p>
+    <div class="row">
+      <button class="btn primary" type="button" id="connect">Continue with OpenRouter</button>
+      <button class="btn" type="button" id="later">Skip for now</button>
+    </div>
+    <p class="small">OpenRouter gives one account access to models from OpenAI, Anthropic, Google and others, including free models. You can also use an OpenAI, Claude or Gemini API key later in Settings.</p>
+  </section>
+  <p class="notice error" id="error" role="alert" hidden></p>
+</main>
+<div id="toast" class="toast" role="alert" hidden></div>
+<script src="/common.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+let start = 'blank', aiAvailable = false;
+
+// Create the first canvas, mark setup done, then either sign in to the AI provider or open the canvas.
+async function finish(connect) {
+  for (const b of document.querySelectorAll('button')) b.disabled = true;
+  try {
+    const { note } = await api('/api/notes', { method: 'POST', body: start === 'sample' ? { sample: true } : { title: 'Untitled' } });
+    await api('/api/me/onboarded', { method: 'POST' });
+    try { sessionStorage.setItem('sl8:reveal', '1'); } catch {}
+    const canvas = '/note?id=' + encodeURIComponent(note.id);
+    location.replace(connect ? '/api/ai/openrouter/start?return=' + encodeURIComponent(canvas) : canvas);
+  } catch (e) {
+    if (e.status === 401) return location.replace('/');
+    $('#error').textContent = e.message;
+    $('#error').hidden = false;
+    for (const b of document.querySelectorAll('button')) b.disabled = false;
+  }
+}
+
+for (const b of document.querySelectorAll('[data-start]')) {
+  b.onclick = () => {
+    start = b.dataset.start;
+    if (!aiAvailable) return finish(false);
+    $('#s1').hidden = true;
+    $('#s2').hidden = false;
+    $('#connect').focus();
+  };
+}
+$('#skip-all').onclick = () => finish(false);
+$('#later').onclick = () => finish(false);
+$('#connect').onclick = () => { $('#connect').textContent = 'Opening OpenRouter…'; finish(true); };
+
+api('/api/me').then(async (me) => {
+  if (me.onboarded) return location.replace('/');
+  aiAvailable = (await api('/api/ai')).available;
+  if (!aiAvailable) $('.step-label').textContent = 'Getting started';
+}).catch((e) => e.status === 401 && location.replace('/'));
+</script>
+</body>
+</html>

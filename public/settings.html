@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Settings · ThinkSL8</title>
+<script>try{var t=JSON.parse(localStorage.getItem('sl8:theme'));if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/style.css">
+<style>
+  section { padding-block: 28px; border-bottom: 1px solid var(--line); display: grid; gap: 16px; }
+  section > h2 { margin: 0; font: 400 28px/1.15 var(--font-display); }
+  h3 { margin: 0; font-size: 16px; font-weight: 700; }
+  .lede { margin: 0; color: var(--muted); max-width: 60ch; }
+  .provider { display: grid; gap: 12px; padding: 18px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
+  .provider p { margin: 0; color: var(--muted); font-size: 15px; max-width: 58ch; }
+  .provider .btn { justify-self: start; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .status { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ink-green); flex: none; }
+  .dot.warn { background: var(--warn); }
+  .sub { color: var(--muted); font-size: 14px; font-weight: 400; }
+  details { border: 1px solid var(--line); border-radius: 12px; padding: 0 16px; }
+  details[open] { padding-bottom: 16px; }
+  summary { padding: 14px 0; cursor: pointer; font-weight: 600; }
+  details .grid { display: grid; gap: 14px; }
+  fieldset { border: 0; margin: 0; padding: 0; display: grid; gap: 8px; }
+  legend { padding: 0; margin-bottom: 4px; font-size: 14px; font-weight: 600; }
+  .choice { display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); cursor: pointer; }
+  .choice input { margin-top: 4px; accent-color: var(--accent); }
+  .choice span { display: grid; }
+  .choice small { color: var(--muted); font-size: 13px; }
+  .choice:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 13px; overflow-wrap: anywhere; }
+  .pref { display: grid; gap: 8px; }
+</style>
+</head>
+<body>
+<main class="page">
+  <header class="page-top">
+    <a class="wordmark" href="/">Think<b>SL8</b></a>
+    <a class="btn quiet" id="back" href="/">Back to canvas</a>
+  </header>
+
+  <section id="ai" aria-labelledby="ai-h">
+    <h2 id="ai-h">AI</h2>
+    <p class="lede" id="ai-loading">Checking your AI connection…</p>
+
+    <div id="ai-off" hidden>
+      <div style="display:grid;gap:16px">
+        <h3 style="font:400 22px/1.2 var(--font-display)">Connect your AI. Think without boundaries.</h3>
+        <p class="lede">Bring the AI you already use into your thinking space. Connect an account, give it access to the context you choose, and start working with your ideas.</p>
+        <div class="provider">
+          <h3>OpenRouter</h3>
+          <p>One account for models from OpenAI, Anthropic, Google and others. Sign in, approve ThinkSL8, and you're done. Free models work without adding credits; paid models use your OpenRouter balance.</p>
+          <a class="btn primary" id="or-connect" href="#">Continue with OpenRouter</a>
+        </div>
+        <p class="notice info">Signing in with ChatGPT, Claude or Gemini accounts isn't offered: those providers don't let other apps use your subscription yet. You can still use them with an API key below.</p>
+      </div>
+    </div>
+
+    <div id="ai-on" hidden style="display:grid;gap:18px">
+      <div class="status"><span class="dot" id="ai-dot"></span><span><span id="ai-name"></span><br><span class="sub" id="ai-how"></span></span></div>
+      <div id="ai-reconnect" class="notice warn" hidden></div>
+      <div class="field">
+        <label for="model">Model</label>
+        <select id="model"><option>Loading models…</option></select>
+        <p class="help" id="model-help"></p>
+      </div>
+      <fieldset>
+        <legend>What your AI can read</legend>
+        <label class="choice"><input type="radio" name="scope" value="selection"><span>Only what I select<small>You pick notes on the canvas each time.</small></span></label>
+        <label class="choice"><input type="radio" name="scope" value="canvas"><span>The canvas I'm on<small>Typed text on the canvas you're asking from.</small></span></label>
+        <label class="choice"><input type="radio" name="scope" value="all"><span>All my canvases<small>Lets you ask about anything you've written.</small></span></label>
+      </fieldset>
+      <p class="notice info" id="disclosure"></p>
+      <div class="row" id="disconnect-row">
+        <button class="btn danger" id="disconnect" type="button">Disconnect</button>
+      </div>
+    </div>
+
+    <p class="notice warn" id="ai-unavailable" hidden>AI connections aren't available on this server yet. Your canvases work as usual.</p>
+
+    <details id="advanced" hidden>
+      <summary>Advanced connections</summary>
+      <div class="grid">
+        <h3>Use an API key</h3>
+        <p class="lede">For developers and power users. API usage is billed by the provider to the account that owns the key, separately from subscriptions like ChatGPT Plus, Claude Pro or Google AI Pro. ThinkSL8 stores the key encrypted and never shows it again.</p>
+        <form id="key-form" class="grid" novalidate>
+          <div class="field">
+            <label for="provider">Provider</label>
+            <select id="provider"></select>
+            <p class="help">Create a key at <span class="mono" id="keys-url"></span></p>
+          </div>
+          <div class="field">
+            <label for="key">API key</label>
+            <input id="key" type="password" autocomplete="off" spellcheck="false" required>
+          </div>
+          <p class="notice error" id="key-error" role="alert" hidden></p>
+          <div><button class="btn primary" id="key-submit" type="submit">Check and connect</button></div>
+        </form>
+      </div>
+    </details>
+  </section>
+
+  <section aria-labelledby="look-h">
+    <h2 id="look-h">Appearance</h2>
+    <div class="pref"><h3>Theme</h3>
+      <div class="seg" role="radiogroup" aria-label="Theme">
+        <label><input type="radio" name="theme" value=""><span>Match device</span></label>
+        <label><input type="radio" name="theme" value="light"><span>Light</span></label>
+        <label><input type="radio" name="theme" value="dark"><span>Dark</span></label>
+      </div>
+    </div>
+    <div class="pref"><h3>Canvas background</h3>
+      <div class="seg" role="radiogroup" aria-label="Canvas background">
+        <label><input type="radio" name="bg" value="dots"><span>Dots</span></label>
+        <label><input type="radio" name="bg" value="grid"><span>Grid</span></label>
+        <label><input type="radio" name="bg" value="lines"><span>Lines</span></label>
+        <label><input type="radio" name="bg" value="plain"><span>Plain</span></label>
+      </div>
+    </div>
+    <div class="pref"><h3>Opening animation</h3>
+      <div class="seg" role="radiogroup" aria-label="Opening animation">
+        <label><input type="radio" name="reveal" value="full"><span>Full</span></label>
+        <label><input type="radio" name="reveal" value="short"><span>Short</span></label>
+        <label><input type="radio" name="reveal" value="off"><span>Off</span></label>
+      </div>
+      <p class="help sub">Plays when you open ThinkSL8. It's always off if your device asks for reduced motion.</p>
+    </div>
+    <p class="help sub">These settings are saved on this device.</p>
+  </section>
+
+  <section aria-labelledby="acct-h">
+    <h2 id="acct-h">Account</h2>
+    <p class="lede">Signed in as <b id="email"></b></p>
+    <div class="row"><button class="btn" id="logout" type="button">Log out</button></div>
+  </section>
+</main>
+<div id="toast" class="toast" role="alert" hidden></div>
+<script src="/common.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+const SCOPE_TEXT = { selection: 'the notes you select', canvas: 'the canvas you ask from', all: 'any of your canvases' };
+let state = null, providers = [];
+
+function show(id) {
+  for (const s of ['#ai-loading', '#ai-off', '#ai-on', '#ai-unavailable']) $(s).hidden = s !== id;
+}
+
+async function loadAI() {
+  try {
+    const r = await api('/api/ai');
+    providers = r.providers;
+    $('#provider').replaceChildren(...providers.map((p) => new Option(p.id === 'anthropic' ? 'Anthropic (Claude)' : p.label, p.id)));
+    $('#provider').value = 'openai';
+    updateKeysUrl();
+    if (!r.available) { show('#ai-unavailable'); $('#advanced').hidden = true; return; }
+    $('#advanced').hidden = false;
+    render(r.connection);
+  } catch (e) {
+    if (e.status === 401) return location.replace('/');
+    $('#ai-loading').textContent = e.message;
+  }
+}
+
+function render(conn) {
+  state = conn;
+  if (!conn) { show('#ai-off'); return; }
+  show('#ai-on');
+  $('#ai-on').style.display = 'grid';
+  $('#ai-name').textContent = `Connected to ${conn.label}`;
+  $('#ai-how').textContent = (conn.method === 'oauth' ? `Signed in with ${conn.label}` : 'API key') + ` · key ending ${conn.hint}`;
+  const needs = conn.status === 'reconnect';
+  $('#ai-dot').classList.toggle('warn', needs);
+  $('#ai-reconnect').hidden = !needs;
+  if (needs) {
+    $('#ai-reconnect').replaceChildren(`${conn.label} stopped accepting this connection. It may have been revoked or expired. `);
+    const a = document.createElement('a');
+    a.textContent = conn.method === 'oauth' ? 'Reconnect with OpenRouter' : 'Enter a new key';
+    a.href = conn.method === 'oauth' ? orStart() : '#advanced';
+    if (conn.method !== 'oauth') a.onclick = () => { $('#advanced').open = true; $('#provider').value = conn.provider; updateKeysUrl(); $('#key').focus(); };
+    $('#ai-reconnect').append(a);
+  }
+  for (const r of document.querySelectorAll('input[name=scope]')) r.checked = r.value === conn.scope;
+  $('#disclosure').textContent = `When you ask something, ThinkSL8 sends your question and the typed text from ${SCOPE_TEXT[conn.scope]} to ${conn.label} so it can answer. Nothing is sent in the background, and handwriting isn't sent. ${conn.label}'s own terms apply to what it receives.`;
+  loadModels();
+}
+
+async function loadModels() {
+  const sel = $('#model');
+  sel.disabled = true;
+  sel.replaceChildren(new Option('Loading models…', ''));
+  $('#model-help').textContent = '';
+  try {
+    const { models } = await api('/api/ai/models');
+    const opts = [];
+    if (state.provider === 'openrouter') opts.push(new Option('Auto (OpenRouter picks a paid model)', 'openrouter/auto'));
+    for (const m of models) opts.push(new Option(m.free ? `${m.name} · free` : m.name, m.id));
+    if (!opts.some((o) => o.value === state.model)) opts.unshift(new Option(state.model, state.model));
+    sel.replaceChildren(...opts);
+    sel.value = state.model;
+    sel.disabled = false;
+    $('#model-help').textContent = state.provider === 'openrouter' ? 'Models marked free cost nothing but are limited to 50 requests a day until you add credits on OpenRouter.' : '';
+  } catch (e) {
+    sel.replaceChildren(new Option(state.model, state.model));
+    $('#model-help').textContent = e.message;
+    if (e.kind === 'auth') loadAI();
+  }
+}
+
+async function patch(body) {
+  try {
+    render((await api('/api/ai', { method: 'PATCH', body })).connection);
+    toast('Saved.');
+  } catch (e) { toast(e.message); }
+}
+$('#model').onchange = () => patch({ model: $('#model').value });
+for (const r of document.querySelectorAll('input[name=scope]')) r.onchange = () => patch({ scope: r.value });
+
+let disarm;
+$('#disconnect').onclick = async () => {
+  const b = $('#disconnect');
+  if (!b.dataset.armed) {
+    b.dataset.armed = '1';
+    b.textContent = `Yes, disconnect ${state.label}`;
+    disarm = setTimeout(() => { delete b.dataset.armed; b.textContent = 'Disconnect'; }, 5000);
+    return;
+  }
+  clearTimeout(disarm);
+  const was = state;
+  try {
+    await api('/api/ai', { method: 'DELETE' });
+    delete b.dataset.armed;
+    b.textContent = 'Disconnect';
+    render(null);
+    toast(`Disconnected. ThinkSL8 no longer has the key. To revoke it on ${was.label} as well, delete it at ${was.keysUrl}`);
+  } catch (e) { toast(e.message); }
+};
+
+function orStart() {
+  return '/api/ai/openrouter/start?return=' + encodeURIComponent('/settings');
+}
+$('#or-connect').addEventListener('click', (e) => {
+  e.preventDefault();
+  $('#or-connect').textContent = 'Opening OpenRouter…';
+  $('#or-connect').setAttribute('aria-disabled', 'true');
+  location.href = orStart();
+});
+
+function updateKeysUrl() {
+  $('#keys-url').textContent = providers.find((p) => p.id === $('#provider').value)?.keysUrl || '';
+}
+$('#provider').onchange = updateKeysUrl;
+$('#key-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = $('#key-submit');
+  btn.disabled = true;
+  btn.textContent = 'Checking the key…';
+  $('#key-error').hidden = true;
+  try {
+    const r = await api('/api/ai/key', { method: 'POST', body: { provider: $('#provider').value, key: $('#key').value } });
+    $('#key').value = '';
+    $('#advanced').open = false;
+    render(r.connection);
+    toast(`Connected to ${r.connection.label}.`);
+  } catch (err) {
+    $('#key-error').textContent = err.message;
+    $('#key-error').hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Check and connect';
+  }
+});
+
+// appearance (this device)
+function bindPref(name, key, fallback, apply) {
+  const v = store.get(key) ?? fallback;
+  for (const r of document.querySelectorAll(`input[name=${name}]`)) {
+    r.checked = r.value === v;
+    r.onchange = () => { store.set(key, r.value || null); apply?.(r.value); };
+  }
+}
+bindPref('theme', 'sl8:theme', '', applyTheme);
+bindPref('bg', 'sl8:bg', 'dots');
+bindPref('reveal', 'sl8:revealMode', store.get('sl8:revealSeen') ? 'short' : 'full');
+
+$('#logout').onclick = async () => {
+  try { await api('/api/logout', { method: 'POST' }); } catch {}
+  location.replace('/');
+};
+
+api('/api/me').then((me) => {
+  $('#email').textContent = me.email;
+  if (me.lastNoteId) $('#back').href = '/note?id=' + encodeURIComponent(me.lastNoteId);
+}).catch((e) => e.status === 401 && location.replace('/'));
+const msg = aiReturnMessage();
+if (msg) toast(msg);
+loadAI();
+</script>
+</body>
+</html>
