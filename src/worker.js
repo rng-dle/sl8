@@ -101,9 +101,49 @@ function searchQuery(q) {
   return words.map((w) => `"${w}"*`).join(' ');
 }
 
+const isId = (v) => typeof v === 'string' && ID.test(v);
 function validItem(it) {
-  return it && typeof it === 'object' && typeof it.id === 'string' && ID.test(it.id) &&
-    (it.kind === 'stroke' || it.kind === 'text') && Number.isFinite(it.t);
+  if (!it || typeof it !== 'object' || !isId(it.id) || !Number.isFinite(it.t)) return false;
+  if (it.kind === 'stroke' || it.kind === 'text') return true;
+  if (it.kind === 'conn') return isId(it.a) && isId(it.b); // arrow from item a to item b
+  if (it.kind === 'portal') return isId(it.target); // card that opens another canvas
+  return false;
+}
+
+// A canvas's look. Unknown keys and bad values are dropped.
+const THEMES = ['light', 'dark', 'paper', 'blueprint', 'chalk'];
+const PATTERNS = ['dots', 'grid', 'lines', 'graph', 'iso', 'plain'];
+const HEX = /^#[0-9a-f]{6}$/i;
+const FILE_ID = /^[0-9a-f-]{36}$/;
+const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+function cleanStyle(v) {
+  const out = {};
+  if (!v || typeof v !== 'object') return out;
+  if (THEMES.includes(v.theme)) out.theme = v.theme;
+  if (PATTERNS.includes(v.pattern)) out.pattern = v.pattern;
+  if (HEX.test(v.paper)) out.paper = v.paper.toLowerCase();
+  if (HEX.test(v.rule)) out.rule = v.rule.toLowerCase();
+  if (Number.isFinite(v.size)) out.size = clamp(Math.round(v.size), 8, 96);
+  if (typeof v.image === 'string' && FILE_ID.test(v.image)) out.image = v.image;
+  if (v.fit === 'tile' || v.fit === 'cover') out.fit = v.fit;
+  if (Number.isFinite(v.dim)) out.dim = clamp(Math.round(v.dim * 100) / 100, 0, 0.9);
+  return out;
+}
+const saveStyle = (env, noteId, style) => env.DB.prepare(
+  'INSERT INTO canvas_style (note_id, style) VALUES (?, ?) ON CONFLICT (note_id) DO UPDATE SET style = excluded.style'
+).bind(noteId, JSON.stringify(style));
+
+// Uploaded images: PNG, JPEG, WebP or GIF only (checked by their first bytes, never SVG), 3 MB, 100 per account.
+const IMAGE_SIGS = [['image/png', [0x89, 0x50, 0x4e, 0x47]], ['image/jpeg', [0xff, 0xd8, 0xff]], ['image/gif', [0x47, 0x49, 0x46, 0x38]], ['image/webp', [0x52, 0x49, 0x46, 0x46]]];
+const sniffImage = (b) => IMAGE_SIGS.find(([type, sig]) => sig.every((x, i) => b[i] === x) && (type !== 'image/webp' || String.fromCharCode(...b.slice(8, 12)) === 'WEBP'))?.[0];
+const fileKey = (userId, id) => `img:${userId}:${id}`;
+async function deleteFiles(env, userId) {
+  let cursor;
+  do {
+    const page = await env.FILES.list({ prefix: `img:${userId}:`, cursor });
+    await Promise.all(page.keys.map((k) => env.FILES.delete(k.name)));
+    cursor = page.list_complete ? null : page.cursor;
+  } while (cursor);
 }
 
 async function api(req, env, ctx, url) {
@@ -113,9 +153,9 @@ async function api(req, env, ctx, url) {
   if (method !== 'GET') {
     const origin = req.headers.get('origin');
     if (origin && origin !== url.origin) return fail(403, 'Request blocked: wrong origin.');
-    if (!(req.headers.get('content-type') || '').includes('application/json')) return fail(415, 'Send JSON.');
+    if (path !== '/api/files' && !(req.headers.get('content-type') || '').includes('application/json')) return fail(415, 'Send JSON.');
   }
-  const body = method === 'GET' ? {} : await req.json().catch(() => ({}));
+  const body = method === 'GET' || path === '/api/files' ? {} : await req.json().catch(() => ({}));
 
   if (path === '/api/signup' && method === 'POST') {
     const c = credentials(body);
@@ -223,10 +263,34 @@ async function api(req, env, ctx, url) {
     const mine = 'SELECT id FROM notes WHERE user_id = ?';
     await env.DB.batch([
       env.DB.prepare(`DELETE FROM items WHERE note_id IN (${mine})`).bind(user.id),
+      env.DB.prepare(`DELETE FROM canvas_style WHERE note_id IN (${mine})`).bind(user.id),
       ...['notes', 'ai_connections', 'ai_usage', 'resets', 'sessions'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(user.id)),
       env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id),
     ]);
+    ctx.waitUntil(deleteFiles(env, user.id).catch((e) => console.error('file cleanup failed', e)));
     return json({ ok: true }, 200, { 'set-cookie': cookie('', 0) });
+  }
+
+  if (path === '/api/files' && method === 'POST') {
+    const bytes = new Uint8Array(await req.arrayBuffer());
+    if (bytes.length > 3 * 1024 * 1024) return fail(413, 'That image is over 3 MB. Try a smaller one.');
+    const type = sniffImage(bytes);
+    if (!type) return fail(415, 'Use a PNG, JPEG, WebP or GIF image.');
+    const existing = await env.FILES.list({ prefix: `img:${user.id}:`, limit: 101 });
+    if (existing.keys.length >= 100) return fail(409, 'You have 100 uploaded images, the current limit.');
+    const id = crypto.randomUUID();
+    await env.FILES.put(fileKey(user.id, id), bytes, { metadata: { type } });
+    return json({ id }, 201);
+  }
+
+  const file = path.match(/^\/api\/files\/([0-9a-f-]{36})$/);
+  if (file && method === 'GET') {
+    const { value, metadata } = await env.FILES.getWithMetadata(fileKey(user.id, file[1]), 'arrayBuffer');
+    if (!value) return fail(404, 'Image not found.');
+    return new Response(value, { headers: {
+      'content-type': metadata?.type || 'application/octet-stream', 'cache-control': 'private, max-age=31536000, immutable',
+      'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'",
+    } });
   }
 
   if (path === '/api/export' && method === 'GET') {
@@ -235,7 +299,9 @@ async function api(req, env, ctx, url) {
       env.DB.prepare('SELECT note_id, data FROM items WHERE note_id IN (SELECT id FROM notes WHERE user_id = ?) ORDER BY t').bind(user.id).all(),
       env.DB.prepare('SELECT created_at FROM users WHERE id = ?').bind(user.id).first(),
     ]);
-    const byNote = Object.fromEntries(notes.map((n) => [n.id, { ...n, items: [] }]));
+    const { results: styles } = await env.DB.prepare('SELECT note_id, style FROM canvas_style WHERE note_id IN (SELECT id FROM notes WHERE user_id = ?)').bind(user.id).all();
+    const styleOf = Object.fromEntries(styles.map((r) => [r.note_id, JSON.parse(r.style)]));
+    const byNote = Object.fromEntries(notes.map((n) => [n.id, { ...n, style: styleOf[n.id] || {}, items: [] }]));
     for (const r of rows) byNote[r.note_id]?.items.push(JSON.parse(r.data));
     const day = new Date().toISOString().slice(0, 10);
     return new Response(JSON.stringify({
@@ -285,6 +351,8 @@ async function api(req, env, ctx, url) {
       const sample = body.sample === true;
       const note = { id: crypto.randomUUID(), title: sample ? 'Start here' : String(body.title || 'Untitled').slice(0, 200), updated_at: now };
       const stmts = [env.DB.prepare('INSERT INTO notes VALUES (?, ?, ?, ?, ?)').bind(note.id, user.id, note.title, now, now)];
+      const style = cleanStyle(body.style);
+      if (Object.keys(style).length) stmts.push(saveStyle(env, note.id, style));
       if (sample) {
         SAMPLE.forEach(([x, y, w, s, c, text], i) => {
           const it = { id: crypto.randomUUID(), kind: 'text', t: now + i, x, y, w, s, c, text };
@@ -326,19 +394,32 @@ async function api(req, env, ctx, url) {
     }
 
     if (!ops && method === 'GET') {
-      const { results } = await env.DB.prepare('SELECT data FROM items WHERE note_id = ? ORDER BY t, id').bind(noteId).all();
+      const [{ results }, style] = await Promise.all([
+        env.DB.prepare('SELECT data FROM items WHERE note_id = ? ORDER BY t, id').bind(noteId).all(),
+        env.DB.prepare('SELECT style FROM canvas_style WHERE note_id = ?').bind(noteId).first('style'),
+      ]);
       // items are stored as JSON already; splice them in without re-parsing
-      return json(`{"note":${JSON.stringify(note)},"items":[${results.map((r) => r.data).join(',')}]}`);
+      return json(`{"note":${JSON.stringify({ ...note, style: JSON.parse(style || '{}') })},"items":[${results.map((r) => r.data).join(',')}]}`);
     }
 
     if (!ops && method === 'PATCH') {
-      const title = String(body.title ?? '').trim().slice(0, 200) || 'Untitled';
-      await env.DB.prepare('UPDATE notes SET title = ?, updated_at = ? WHERE id = ?').bind(title, Date.now(), noteId).run();
-      return json({ title });
+      const out = {};
+      const stmts = [];
+      if (body.title !== undefined) {
+        out.title = String(body.title ?? '').trim().slice(0, 200) || 'Untitled';
+        stmts.push(env.DB.prepare('UPDATE notes SET title = ?, updated_at = ? WHERE id = ?').bind(out.title, Date.now(), noteId));
+      }
+      if (body.style !== undefined) {
+        out.style = cleanStyle(body.style);
+        stmts.push(saveStyle(env, noteId, out.style));
+      }
+      if (stmts.length) await env.DB.batch(stmts);
+      return json(out);
     }
 
     if (!ops && method === 'DELETE') {
       await env.DB.batch([
+        env.DB.prepare('DELETE FROM canvas_style WHERE note_id = ?').bind(noteId),
         env.DB.prepare('DELETE FROM items WHERE note_id = ?').bind(noteId),
         env.DB.prepare('DELETE FROM notes WHERE id = ?').bind(noteId),
       ]);

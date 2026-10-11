@@ -9,7 +9,7 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#2a44c4">
+<meta name="theme-color" content="#0a2b48">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
@@ -26,12 +26,8 @@
   .brand { grid-area: brand; }
   .card { grid-area: card; }
   .features { grid-area: features; }
-  .brand h1 { margin: 0; font: 400 clamp(56px, 12vw, 104px)/0.95 var(--font-display); letter-spacing: -0.015em; }
-  .brand h1 b { font-weight: 400; color: var(--accent); }
-  .brand .infinity { width: min(220px, 56%); height: auto; margin: 14px 0 18px; }
-  .brand .infinity path { stroke-width: 5; stroke-dasharray: var(--len); stroke-dashoffset: 0; animation: draw 1.6s cubic-bezier(.55,.05,.3,1) both .15s; }
-  @keyframes draw { from { stroke-dashoffset: var(--len); } }
-  .tagline { margin: 0 0 8px; font: 400 clamp(24px, 3.4vw, 30px)/1.2 var(--font-display); }
+  .brand h1 { display: flex; align-items: baseline; gap: 0.06em; margin: 0; font: 400 clamp(56px, 12vw, 104px)/0.95 var(--font-display); letter-spacing: -0.015em; }
+  .tagline { margin: 20px 0 8px; font: 400 clamp(24px, 3.4vw, 30px)/1.2 var(--font-display); }
   .pitch { margin: 0; max-width: 34ch; font-size: clamp(17px, 2.2vw, 19px); line-height: 1.5; color: var(--muted); text-wrap: balance; }
   .features { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 15px; }
   .features li { display: flex; gap: 10px; align-items: baseline; }
@@ -54,8 +50,7 @@
   <p id="entering">Opening your canvas…</p>
   <section id="auth" hidden>
     <div class="brand">
-      <h1>Think<b>SL8</b></h1>
-      <svg class="infinity" viewBox="0 0 220 64" aria-hidden="true"><path id="mark"></path></svg>
+      <h1 aria-label="ThinkSL8">Think<span data-mark></span></h1>
       <p class="tagline">Think without boundaries.</p>
       <p class="pitch">An endless canvas for your thoughts. Put them anywhere, let them grow, and bring in the AI you already use when you want it.</p>
     </div>
@@ -87,10 +82,6 @@
 <script>
 const $ = (s) => document.querySelector(s);
 let mode = 'login';
-
-const mark = $('#mark');
-mark.setAttribute('d', infinityPath(110, 32, 104));
-mark.style.setProperty('--len', mark.getTotalLength());
 
 function setMode(m) {
   mode = m;
