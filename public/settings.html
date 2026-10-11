@@ -128,6 +128,13 @@
         <label><input type="radio" name="bg" value="plain"><span>Plain</span></label>
       </div>
     </div>
+    <div class="pref"><h3>Tools</h3>
+      <div class="seg" role="radiogroup" aria-label="Tools">
+        <label><input type="radio" name="toolbar" value="ring"><span>Ring</span></label>
+        <label><input type="radio" name="toolbar" value="bar"><span>Bar</span></label>
+      </div>
+      <p class="help sub">Ring is one round button you can drag anywhere; tap it and your tools open in a circle around it. Bar keeps them along the bottom. Very small screens always use the bar.</p>
+    </div>
     <div class="pref"><h3>Opening animation</h3>
       <div class="seg" role="radiogroup" aria-label="Opening animation">
         <label><input type="radio" name="reveal" value="full"><span>Stretch</span></label>
@@ -340,6 +347,7 @@ function bindPref(name, key, fallback, apply) {
 bindPref('theme', 'sl8:theme', '', applyTheme);
 bindPref('bg', 'sl8:bg', 'dots');
 bindPref('reveal', 'sl8:revealMode', 'full');
+bindPref('toolbar', 'sl8:toolbar', 'ring');
 
 // tear sound (this device): the built-in rip, the user's own audio file, or nothing
 let playTear = tearSoundPlayer();

@@ -29,7 +29,8 @@ banner_css = '''
 '''
 banner = '''<div class="pv" role="note"><b>Think<span data-mark></span></b><span class="pv-note">Preview · saved only in this browser</span>
   <button type="button" onclick="sessionStorage.setItem('sl8:reveal','1'); store.set('sl8:revealMode','full'); reveal()">Replay</button>
-  <button type="button" onclick="document.getElementById('pv-sound').click()">Tear sound</button>
+  <button type="button" onclick="tour()">Tour</button>
+  <button type="button" onclick="document.getElementById('pv-sound').click()">Sound</button>
   <input id="pv-sound" type="file" accept="audio/*,.mp3,.m4a,.wav,.ogg" hidden onchange="previewSound(this)">
   <button type="button" onclick="previewReset()">Reset</button></div>
 '''

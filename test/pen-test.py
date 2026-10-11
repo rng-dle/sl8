@@ -8,7 +8,9 @@ B = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8787"
 
 with sync_playwright() as p:
     br = p.chromium.launch()
-    pg = br.new_context(extra_http_headers=RUN_IP, viewport={"width": 412, "height": 900}, has_touch=True).new_page()
+    pc = br.new_context(extra_http_headers=RUN_IP, viewport={"width": 412, "height": 900}, has_touch=True)
+    pc.add_init_script("localStorage.setItem('sl8:toolbar', '\"bar\"')")  # drives the bottom bar
+    pg = pc.new_page()
     pg.goto(B + "/")
     pg.click("#tab-signup")
     pg.fill("#email", f"pen{random.randint(1, 99999)}@example.com")

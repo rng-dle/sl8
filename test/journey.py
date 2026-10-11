@@ -15,6 +15,7 @@ def ok(cond, name, extra=""):
 with sync_playwright() as p:
     br = p.chromium.launch()
     ctx = br.new_context(extra_http_headers=RUN_IP, viewport={"width": 1280, "height": 820}, device_scale_factor=1)
+    ctx.add_init_script("localStorage.setItem('sl8:toolbar', '\"bar\"')")  # this journey drives the bottom bar
     pg = ctx.new_page()
     errors = []
     pg.on("pageerror", lambda e: errors.append(str(e)))
@@ -156,6 +157,7 @@ with sync_playwright() as p:
 
     # phone, dark
     m = br.new_context(extra_http_headers=RUN_IP, viewport={"width": 390, "height": 844}, device_scale_factor=2, has_touch=True, is_mobile=True, storage_state=ctx.storage_state())
+    m.add_init_script("localStorage.setItem('sl8:toolbar', '\"bar\"')")
     mp = m.new_page()
     mp.goto(pg.url)
     mp.wait_for_selector("#status:text('Saved')")
