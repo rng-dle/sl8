@@ -111,6 +111,12 @@
   .portal-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; max-height: 240px; overflow-y: auto; }
   .portal-list button { width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: none; text-align: left; font: 400 17px/1.25 var(--font-display); color: var(--text); }
   .portal-list button:hover { background: var(--accent-soft); }
+  .share-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 4px; }
+  .share-list li { display: flex; align-items: center; gap: 4px; font-size: 14px; }
+  .share-list span { flex: 1; }
+  /* opened from a share link: no account features; a view link has no tools */
+  [data-share] :is(#ai-open, #menu-open, #back, #sel-ai, #media-add, #trail) { display: none !important; }
+  [data-share=read] .dock { display: none; }
 
   .dock {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 10;
@@ -309,6 +315,7 @@
     <div class="row" id="c-dim-row" hidden><label for="c-dim">Dim</label><input type="range" id="c-dim" min="0" max="0.85" step="0.05"></div>
   </div>
   <nav>
+    <button type="button" id="share-open">Share…</button>
     <button type="button" id="portal-add">Add a portal…</button>
     <button type="button" id="tour-start">Show me around</button>
     <a href="/canvases">All canvases</a>
@@ -324,6 +331,35 @@
   </form>
   <p class="help sub" style="margin:0;font-size:13px;color:var(--muted)">Creates a new canvas inside this one. Or open one you already have:</p>
   <ul class="portal-list" id="portal-list"></ul>
+</div>
+
+<div id="share-menu" class="menu" hidden role="dialog" aria-label="Share this canvas">
+  <h3>Share this canvas</h3>
+  <div><b>People with the link can</b>
+    <div class="seg" role="radiogroup" aria-label="What the link allows">
+      <label><input type="radio" name="sh-mode" value="read" checked><span>View</span></label>
+      <label><input type="radio" name="sh-mode" value="write"><span>Edit</span></label>
+    </div>
+  </div>
+  <div><b>Share</b>
+    <div class="seg" role="radiogroup" aria-label="How much to share">
+      <label><input type="radio" name="sh-area" value="*" checked><span>Whole canvas</span></label>
+      <label><input type="radio" name="sh-area" value="pick"><span>Choose squares</span></label>
+    </div>
+  </div>
+  <button class="btn primary" type="button" id="sh-create">Create link</button>
+  <div class="row" id="sh-new" hidden>
+    <input id="sh-link" class="title-input" style="flex:1;box-shadow:none;border:1px solid var(--line);font:14px var(--font-ui)" readonly aria-label="New link">
+    <button class="btn" type="button" id="sh-copy">Copy</button>
+  </div>
+  <div><b>Links</b>
+    <p id="sh-none" class="sub" style="margin:0;font-size:13px;color:var(--muted)">None yet. Anyone with a link can open it without an account.</p>
+    <ul class="share-list" id="sh-list"></ul>
+  </div>
+</div>
+<div id="picker" class="tour" hidden role="dialog" aria-label="Choose squares to share">
+  <p class="tour-text">Tap or drag across the squares to share. Zoom first to change their size.</p>
+  <div class="tour-actions"><button class="btn quiet" type="button" id="pick-cancel">Cancel</button><button class="btn primary" type="button" id="pick-done" disabled>Create link</button></div>
 </div>
 
 <div id="selbar" class="selbar" hidden>
