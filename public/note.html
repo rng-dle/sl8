@@ -328,6 +328,7 @@
 
 <div id="selbar" class="selbar" hidden>
   <span class="count" id="sel-count"></span>
+  <button class="btn" id="sel-play" type="button" hidden>Play</button>
   <button class="btn" id="sel-ai" type="button">Ask AI</button>
   <button class="btn danger" id="sel-del" type="button">Delete</button>
 </div>
@@ -382,6 +383,8 @@
     <button class="icon-btn" data-tool="text" aria-label="Text (T)" title="Text (T)"><svg viewBox="0 0 24 24"><path d="M4 7V4h16v3"/><path d="M9 20h6"/><path d="M12 4v16"/></svg></button>
     <button class="icon-btn" data-tool="connect" aria-label="Connect (C)" title="Connect (C): drag from one note to another, or into empty space for a new linked note"><svg viewBox="0 0 24 24"><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="5.5" r="2.5"/><path d="M7.5 16.5 16.5 7.5"/><path d="M11 7.5h5.5V13"/></svg></button>
     <button class="icon-btn" data-tool="hand" aria-label="Move around (Space)" title="Move around (hold Space)"><svg viewBox="0 0 24 24"><path d="m5 9-3 3 3 3"/><path d="m9 5 3-3 3 3"/><path d="m15 19-3 3-3-3"/><path d="m19 9 3 3-3 3"/><path d="M2 12h20"/><path d="M12 2v20"/></svg></button>
+    <button class="icon-btn" id="media-add" aria-label="Add a photo or video" title="Add a photo or video (or paste, or drop a file)"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg></button>
+    <input type="file" id="media-file" accept="image/*,video/*" multiple hidden>
     <span class="sep"></span>
     <button class="icon-btn" id="undo" aria-label="Undo" title="Undo (Ctrl+Z)" disabled><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>
     <button class="icon-btn" id="redo" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" disabled><svg viewBox="0 0 24 24"><path d="m15 14 5-5-5-5"/><path d="M20 9H9.5a5.5 5.5 0 0 0 0 11H13"/></svg></button>

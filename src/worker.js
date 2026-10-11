@@ -107,6 +107,9 @@ function validItem(it) {
   if (it.kind === 'stroke' || it.kind === 'text') return true;
   if (it.kind === 'conn') return isId(it.a) && isId(it.b); // arrow from item a to item b
   if (it.kind === 'portal') return isId(it.target); // card that opens another canvas
+  if (it.kind === 'image' || it.kind === 'video') { // a photo or video placed on the canvas, from /api/files
+    return FILE_ID.test(it.file) && [it.x, it.y, it.w, it.h].every(Number.isFinite) && it.w > 0 && it.h > 0;
+  }
   return false;
 }
 
@@ -136,6 +139,23 @@ const saveStyle = (env, noteId, style) => env.DB.prepare(
 // Uploaded images: PNG, JPEG, WebP or GIF only (checked by their first bytes, never SVG), 3 MB, 100 per account.
 const IMAGE_SIGS = [['image/png', [0x89, 0x50, 0x4e, 0x47]], ['image/jpeg', [0xff, 0xd8, 0xff]], ['image/gif', [0x47, 0x49, 0x46, 0x38]], ['image/webp', [0x52, 0x49, 0x46, 0x46]]];
 const sniffImage = (b) => IMAGE_SIGS.find(([type, sig]) => sig.every((x, i) => b[i] === x) && (type !== 'image/webp' || String.fromCharCode(...b.slice(8, 12)) === 'WEBP'))?.[0];
+const sniffVideo = (b) => {
+  if (String.fromCharCode(...b.slice(4, 8)) === 'ftyp') return String.fromCharCode(...b.slice(8, 12)) === 'qt  ' ? 'video/quicktime' : 'video/mp4';
+  if (b[0] === 0x1a && b[1] === 0x45 && b[2] === 0xdf && b[3] === 0xa3) return 'video/webm';
+  return null;
+};
+// ponytail: files live in KV (25 MiB per value, 1 GB on the free plan); move to R2 for longer videos and more room
+const MAX_IMAGE = 3 * 1024 * 1024, MAX_VIDEO = 25_000_000, MAX_FILES = 100, MAX_USER_BYTES = 200_000_000;
+// Files no canvas uses any more (deleted photos, replaced backgrounds), for clearing room when someone hits a limit.
+async function unusedFiles(env, userId, keys) {
+  const [items, styles] = await env.DB.batch([
+    env.DB.prepare("SELECT i.data FROM items i JOIN notes n ON n.id = i.note_id WHERE n.user_id = ? AND (i.data LIKE '%\"kind\":\"image\"%' OR i.data LIKE '%\"kind\":\"video\"%')").bind(userId),
+    env.DB.prepare('SELECT s.style FROM canvas_style s JOIN notes n ON n.id = s.note_id WHERE n.user_id = ?').bind(userId),
+  ]);
+  const used = new Set([...items.results.map((r) => JSON.parse(r.data).file), ...styles.results.map((r) => JSON.parse(r.style).image)]);
+  const settled = Date.now() - 10 * 60_000; // a fresh upload may not be saved onto its canvas yet
+  return keys.filter((k) => !used.has(k.name.split(':')[2]) && (k.metadata?.at || 0) < settled);
+}
 const fileKey = (userId, id) => `img:${userId}:${id}`;
 async function deleteFiles(env, userId) {
   let cursor;
@@ -333,24 +353,40 @@ async function api(req, env, ctx, url) {
 
   if (path === '/api/files' && method === 'POST') {
     const bytes = new Uint8Array(await req.arrayBuffer());
-    if (bytes.length > 3 * 1024 * 1024) return fail(413, 'That image is over 3 MB. Try a smaller one.');
-    const type = sniffImage(bytes);
-    if (!type) return fail(415, 'Use a PNG, JPEG, WebP or GIF image.');
-    const existing = await env.FILES.list({ prefix: `img:${user.id}:`, limit: 101 });
-    if (existing.keys.length >= 100) return fail(409, 'You have 100 uploaded images, the current limit.');
+    const image = sniffImage(bytes), type = image || sniffVideo(bytes);
+    if (!type) return fail(415, 'Use a photo (JPEG, PNG, WebP or GIF) or a video (MP4, MOV or WebM).');
+    if (image && bytes.length > MAX_IMAGE) return fail(413, 'That image is over 3 MB. Try a smaller one.');
+    if (!image && bytes.length > MAX_VIDEO) return fail(413, 'Videos can be up to 25 MB for now, about 20 to 30 seconds from a phone.');
+    let { keys } = await env.FILES.list({ prefix: `img:${user.id}:` }); // one page holds 1000, well over the limit
+    const full = () => keys.length >= MAX_FILES || keys.reduce((n, k) => n + (k.metadata?.size || 0), 0) + bytes.length > MAX_USER_BYTES;
+    if (full()) { // clear out files no canvas uses before saying no
+      const unused = await unusedFiles(env, user.id, keys);
+      await Promise.all(unused.map((k) => env.FILES.delete(k.name)));
+      keys = keys.filter((k) => !unused.includes(k));
+      if (full()) return fail(409, `You've used your space for photos and videos (${MAX_FILES} files or ${MAX_USER_BYTES / 1e6} MB). Delete some from your canvases to add more.`);
+    }
     const id = crypto.randomUUID();
-    await env.FILES.put(fileKey(user.id, id), bytes, { metadata: { type } });
+    await env.FILES.put(fileKey(user.id, id), bytes, { metadata: { type, size: bytes.length, at: Date.now() } });
     return json({ id }, 201);
   }
 
   const file = path.match(/^\/api\/files\/([0-9a-f-]{36})$/);
   if (file && method === 'GET') {
     const { value, metadata } = await env.FILES.getWithMetadata(fileKey(user.id, file[1]), 'arrayBuffer');
-    if (!value) return fail(404, 'Image not found.');
-    return new Response(value, { headers: {
+    if (!value) return fail(404, 'File not found.');
+    const headers = {
       'content-type': metadata?.type || 'application/octet-stream', 'cache-control': 'private, max-age=31536000, immutable',
-      'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'",
-    } });
+      'x-content-type-options': 'nosniff', 'content-security-policy': "default-src 'none'", 'accept-ranges': 'bytes',
+    };
+    // byte ranges, so videos can seek
+    const range = (req.headers.get('range') || '').match(/^bytes=(\d*)-(\d*)$/), size = value.byteLength;
+    if (range && (range[1] || range[2])) {
+      const start = range[1] ? Number(range[1]) : Math.max(0, size - Number(range[2]));
+      const end = range[1] && range[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+      if (start >= size || start > end) return new Response(null, { status: 416, headers: { 'content-range': `bytes */${size}` } });
+      return new Response(value.slice(start, end + 1), { status: 206, headers: { ...headers, 'content-range': `bytes ${start}-${end}/${size}` } });
+    }
+    return new Response(value, { headers });
   }
 
   if (path === '/api/export' && method === 'GET') {

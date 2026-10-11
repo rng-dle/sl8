@@ -141,6 +141,52 @@ function clear(ctx) {
   ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
 }
 
+/* ---------- photos and videos: drawn under the ink, so you can write on them ---------- */
+const isMedia = (it) => it?.kind === 'image' || it?.kind === 'video';
+const media = new Map(); // file id -> <img> or <video>, loaded when first drawn
+let videoFrame = 0;
+function mediaEl(it) {
+  let el = media.get(it.file);
+  if (!el) {
+    el = document.createElement(it.kind === 'video' ? 'video' : 'img');
+    if (it.kind === 'video') {
+      Object.assign(el, { preload: 'metadata', playsInline: true });
+      el.onloadedmetadata = () => { el.currentTime = 0.001; }; // fetch the first frame to show
+      el.onseeked = el.onpause = el.onended = () => schedule(true);
+      el.onplay = () => { if (!videoFrame) videoFrame = requestAnimationFrame(videoFrames); };
+    } else el.onload = () => schedule(true);
+    el.src = fileUrl(it.file);
+    media.set(it.file, el);
+  }
+  return el;
+}
+function videoFrames() { // keep painting while any video plays
+  videoFrame = [...media.values()].some((v) => v.tagName === 'VIDEO' && !v.paused) ? requestAnimationFrame(videoFrames) : 0;
+  schedule(true);
+}
+function drawMedia(ctx, it) {
+  const el = mediaEl(it), ready = it.kind === 'video' ? el.readyState >= 2 : el.complete && el.naturalWidth;
+  ctx.save();
+  ctx.beginPath();
+  ctx.roundRect(it.x, it.y, it.w, it.h, Math.min(10, it.w / 8, it.h / 8));
+  ctx.clip();
+  if (ready) ctx.drawImage(el, it.x, it.y, it.w, it.h);
+  else { ctx.fillStyle = 'rgba(127,127,127,.18)'; ctx.fill(); }
+  ctx.restore();
+  if (it.kind === 'video' && el.paused) { // a play badge
+    const r = Math.max(14, Math.min(it.w, it.h) * 0.11), cx = it.x + it.w / 2, cy = it.y + it.h / 2;
+    ctx.fillStyle = 'rgba(0,0,0,.55)';
+    ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.moveTo(cx - r * 0.32, cy - r * 0.5); ctx.lineTo(cx + r * 0.55, cy); ctx.lineTo(cx - r * 0.32, cy + r * 0.5); ctx.fill();
+  }
+}
+function toggleVideo(it) {
+  const el = mediaEl(it);
+  if (el.paused) el.play().catch(() => toast("This video can't play here."));
+  else el.pause();
+}
+
 // ponytail: full redraw of visible strokes on every camera move; add tile caching if notes reach tens of thousands of strokes
 function paintBase() {
   clear(bctx);
@@ -148,6 +194,9 @@ function paintBase() {
   const vx0 = -cam.x / cam.z, vy0 = -cam.y / cam.z;
   const vx1 = vx0 + board.clientWidth / cam.z, vy1 = vy0 + board.clientHeight / cam.z;
   if (!sorted) sorted = [...items.values()].sort((a, b) => a.t - b.t);
+  for (const it of sorted) {
+    if (isMedia(it) && it.x < vx1 && it.x + it.w > vx0 && it.y < vy1 && it.y + it.h > vy0) drawMedia(bctx, it);
+  }
   for (const it of sorted) {
     if (it.kind !== 'stroke') continue;
     const b = bbox(it);
@@ -243,6 +292,15 @@ function paintLive() {
   const sb = selBounds();
   const bar = $('#selbar');
   bar.hidden = !sb || gesture?.kind === 'move' || gesture?.kind === 'marquee';
+  const one = resizable();
+  if (one) { // the corner handle that resizes it
+    const [hx, hy] = handleAt(one);
+    lctx.setTransform(d, 0, 0, d, 0, 0);
+    lctx.fillStyle = palette.accent;
+    lctx.beginPath(); lctx.arc(hx, hy, 7, 0, Math.PI * 2); lctx.fill();
+  }
+  $('#sel-play').hidden = items.get([...selection][0])?.kind !== 'video' || selection.size !== 1;
+  if (!$('#sel-play').hidden) $('#sel-play').textContent = mediaEl(items.get([...selection][0])).paused ? 'Play' : 'Pause';
   if (sb) {
     const pad = 6 / cam.z;
     box({ x0: sb.x0 - pad, y0: sb.y0 - pad, x1: sb.x1 + pad, y1: sb.y1 + pad });
@@ -254,6 +312,8 @@ function paintLive() {
     }
   }
 }
+const resizable = () => { const it = selection.size === 1 && items.get([...selection][0]); return isMedia(it) && !gesture?.kind?.match(/move|marquee/) ? it : null; };
+const handleAt = (it) => [(it.x + it.w) * cam.z + cam.x + 6, (it.y + it.h) * cam.z + cam.y + 6];
 function paintView() {
   textsEl.style.transform = `translate(${cam.x}px, ${cam.y}px) scale(${cam.z})`;
   paintBackground();
@@ -374,7 +434,7 @@ function apply(id, item, save = true) {
   else if (textEls.has(id)) { textEls.get(id).remove(); textEls.delete(id); }
   if (save) queue(id, item);
   // arrows hang off other items, so anything but a plain new stroke can move them
-  if (item?.kind !== 'stroke' && (connCount || item?.kind === 'conn' || prev?.kind === 'conn')) schedule(true);
+  if (item?.kind !== 'stroke' && (connCount || item?.kind === 'conn' || prev?.kind === 'conn' || isMedia(item) || isMedia(prev))) schedule(true);
   updateHint();
 }
 const renderDom = (it) => (it.kind === 'text' ? renderText(it) : it.kind === 'portal' ? renderPortal(it) : null);
@@ -651,7 +711,7 @@ function addPortal(target) {
 /* ---------- selection ---------- */
 function itemRect(it) {
   if (it.kind === 'stroke') return bbox(it);
-  if (it.kind === 'portal') return { x0: it.x, y0: it.y, x1: it.x + it.w, y1: it.y + it.h };
+  if (it.kind === 'portal' || isMedia(it)) return { x0: it.x, y0: it.y, x1: it.x + it.w, y1: it.y + it.h };
   if (it.kind === 'conn') {
     const e = connEnds(it);
     return e && { x0: Math.min(e[0][0], e[1][0]), y0: Math.min(e[0][1], e[1][1]), x1: Math.max(e[0][0], e[1][0]), y1: Math.max(e[0][1], e[1][1]) };
@@ -704,6 +764,10 @@ function hitItem(x, y) {
     if (it.kind !== 'stroke') continue;
     const b = bbox(it);
     if (x >= b.x0 - r && x <= b.x1 + r && y >= b.y0 - r && y <= b.y1 + r && hitStroke(it, x, y, r)) return it;
+  }
+  for (let i = sorted.length - 1; i >= 0; i--) { // photos and videos are underneath the ink
+    const it = sorted[i];
+    if (isMedia(it) && x >= it.x && x <= it.x + it.w && y >= it.y && y <= it.y + it.h) return it;
   }
   return null;
 }
@@ -854,6 +918,11 @@ function onDown(e) {
     return;
   }
   if (tool.name === 'select') {
+    const one = resizable();
+    if (one && Math.hypot(e.clientX - handleAt(one)[0], e.clientY - handleAt(one)[1]) < (e.pointerType === 'mouse' ? 12 : 24)) {
+      gesture = { kind: 'resize', id: e.pointerId, orig: one };
+      return;
+    }
     const [x, y] = toWorld(e.clientX, e.clientY);
     const sb = selBounds(), pad = 8 / cam.z;
     const insideSel = sb && x >= sb.x0 - pad && x <= sb.x1 + pad && y >= sb.y0 - pad && y <= sb.y1 + pad;
@@ -944,6 +1013,10 @@ function onMove(e) {
     }
     sorted = null;
     schedule(true);
+  } else if (gesture.kind === 'resize') { // keeps its shape
+    const o = gesture.orig, w = Math.max(24, toWorld(e.clientX, e.clientY)[0] - o.x);
+    items.set(o.id, { ...o, w: Math.round(w), h: Math.round((w * o.h) / o.w) });
+    schedule(true);
   } else if (gesture.kind === 'marquee') {
     const [x, y] = toWorld(e.clientX, e.clientY), { x0, y0 } = gesture;
     gesture.rect = { x0: Math.min(x, x0), y0: Math.min(y, y0), x1: Math.max(x, x0), y1: Math.max(y, y0) };
@@ -973,6 +1046,11 @@ function onUp(e) {
     schedule(false);
   } else if (g.kind === 'erase') {
     endErase(g);
+  } else if (g.kind === 'resize') {
+    const after = items.get(g.orig.id);
+    items.set(g.orig.id, g.orig);
+    if (after.w !== g.orig.w) commit([{ id: g.orig.id, before: g.orig, after }]);
+    schedule(true);
   } else if (g.kind === 'text' && !g.wasEditing && e.type === 'pointerup' && Math.hypot(e.clientX - g.sx, e.clientY - g.sy) < 8) {
     newText(...toWorld(e.clientX, e.clientY));
   } else if (g.kind === 'connect') {
@@ -1009,6 +1087,7 @@ function onUp(e) {
       if (hit?.kind === 'text') editText(hit.id);
       else if (hit?.kind === 'portal') openPortal(hit.id);
       else if (hit?.kind === 'conn') editLabel(hit.id);
+      else if (hit?.kind === 'video') toggleVideo(hit);
       else if (!g.wasEditing) { setSelection([]); newText(x, y); }
     }
     schedule(true);
@@ -1162,7 +1241,7 @@ function layoutRing() {
   const inner = [...dock.querySelectorAll('nav.bar > button')].filter(shown);
   const outer = [...dock.querySelectorAll('#options button, #options label')].filter(shown);
   const slider = shown($('#width')) ? $('#width') : null;
-  const r1 = 88, step = 38, gap = slider ? 1.3 : 0; // gap: radians kept free at the bottom for the slider
+  const r1 = Math.max(88, (inner.length * 52) / (2 * Math.PI)), step = 38, gap = slider ? 1.3 : 0; // gap: radians kept free at the bottom for the slider
   const r2 = Math.max(148, (outer.length * step) / (2 * Math.PI - gap));
   let n = 0;
   const place = (el, x, y) => {
@@ -1212,7 +1291,7 @@ $('#fab').addEventListener('click', (e) => { if (e.detail === 0) openRing(!ringO
 $('#ring-scrim').addEventListener('pointerdown', (e) => { e.preventDefault(); openRing(false); });
 // tools with nothing more to choose close the ring; drawing tools keep it open for their colours and sizes
 $('nav.bar').addEventListener('click', (e) => {
-  const b = e.target.closest('[data-tool], #zoom');
+  const b = e.target.closest('[data-tool], #zoom, #media-add');
   if (b && ringOpen() && !['pen', 'hl', 'eraser', 'text'].includes(b.dataset.tool)) openRing(false);
 });
 addEventListener('keydown', (e) => { if (e.key === 'Escape' && ringOpen()) openRing(false); });
@@ -1370,25 +1449,77 @@ $('#c-rule').oninput = (e) => setLook({ rule: e.target.value });
 $('#c-dim').oninput = (e) => setLook({ dim: Number(e.target.value) });
 $('#c-colors-reset').onclick = () => setLook({ paper: undefined, rule: undefined });
 $('#c-image-remove').onclick = () => setLook({ image: undefined, dim: undefined, fit: undefined });
+// Upload a photo (shrunk to 2560px on its long side, plenty on any screen) or a video; gives its file id and pixel size.
+async function upload(file) {
+  let blob = file, w, h;
+  if (file.type.startsWith('video/')) {
+    if (file.size > 25e6) throw new Error('Videos can be up to 25 MB for now, about 20 to 30 seconds from a phone.');
+    [w, h] = await new Promise((ok, no) => {
+      const v = document.createElement('video');
+      v.preload = 'metadata';
+      v.onloadedmetadata = () => { ok([v.videoWidth || 640, v.videoHeight || 360]); URL.revokeObjectURL(v.src); };
+      v.onerror = () => no(new Error("That video can't play in this browser. Try an MP4."));
+      v.src = URL.createObjectURL(file);
+    });
+  } else {
+    const bmp = await createImageBitmap(file).catch(() => { throw new Error("That picture can't be opened here. Try a JPEG or PNG."); });
+    const k = Math.min(1, 2560 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = w = Math.round(bmp.width * k); c.height = h = Math.round(bmp.height * k);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    const keep = /^image\/(png|gif|webp)$/.test(file.type) && k === 1 && file.size < 3e6; // keeps transparency
+    if (!keep) blob = await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.86));
+  }
+  const res = await fetch('/api/files', { method: 'POST', headers: { 'content-type': blob.type || 'application/octet-stream' }, body: blob });
+  const j = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(j.error || 'Upload failed.');
+  return { id: j.id, w, h };
+}
+// Put photos and videos on the canvas, centred on a screen point (the middle of the view unless dropped somewhere).
+async function addMedia(files, sx = board.clientWidth / 2, sy = board.clientHeight / 2) {
+  files = [...files].filter((f) => /^(image|video)\//.test(f.type));
+  if (!files.length) return toast('Choose a photo or a video.');
+  toast(files.length > 1 ? `Adding ${files.length} files…` : 'Adding…');
+  const added = [];
+  for (const [i, file] of files.entries()) {
+    try {
+      const f = await upload(file);
+      const k = Math.min(1, (board.clientWidth * 0.6) / f.w, (board.clientHeight * 0.5) / f.h) / cam.z; // fits the view
+      const w = Math.round(f.w * k), h = Math.round(f.h * k), [x, y] = toWorld(sx + i * 24, sy + i * 24);
+      const it = { id: crypto.randomUUID(), kind: file.type.startsWith('video/') ? 'video' : 'image', t: Date.now(), file: f.id, x: Math.round(x - w / 2), y: Math.round(y - h / 2), w, h };
+      commit([{ id: it.id, before: null, after: it }]);
+      added.push(it.id);
+    } catch (err) { toast(err.message); }
+  }
+  if (!added.length) return;
+  $('#toast').hidden = true;
+  setTool('select');
+  setSelection(added);
+}
+$('#media-add').onclick = () => $('#media-file').click();
+$('#media-file').onchange = (e) => { const f = [...e.target.files]; e.target.value = ''; addMedia(f); };
+$('#sel-play').onclick = () => { const it = items.get([...selection][0]); if (it?.kind === 'video') toggleVideo(it); schedule(false); };
+addEventListener('paste', (e) => { // a copied picture
+  const files = [...(e.clipboardData?.files || [])];
+  if (!files.length || e.target.closest?.('input, textarea')) return;
+  e.preventDefault();
+  addMedia(files);
+});
+board.addEventListener('dragover', (e) => e.preventDefault());
+board.addEventListener('drop', (e) => { // files dragged in from the desktop
+  e.preventDefault();
+  if (e.dataTransfer?.files.length) addMedia(e.dataTransfer.files, e.clientX, e.clientY);
+});
+
 $('#c-image').onchange = async (e) => {
   const file = e.target.files[0];
   e.target.value = '';
   if (!file) return;
   toast('Uploading…');
   try {
-    // shrink large photos before upload: 2560px on the long side is plenty for a background
-    const bmp = await createImageBitmap(file);
-    const k = Math.min(1, 2560 / Math.max(bmp.width, bmp.height));
-    const c = document.createElement('canvas');
-    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
-    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
-    const keepPng = file.type === 'image/png' && k === 1 && file.size < 3e6;
-    const blob = keepPng ? file : await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.86));
-    const res = await fetch('/api/files', { method: 'POST', headers: { 'content-type': blob.type }, body: blob });
-    const j = await res.json();
-    if (!res.ok) throw new Error(j.error || 'Upload failed.');
-    imageSizes.set(j.id, [c.width, c.height]);
-    setLook({ image: j.id, fit: look.fit || 'cover', dim: look.dim ?? 0.15 });
+    const f = await upload(file);
+    imageSizes.set(f.id, [f.w, f.h]);
+    setLook({ image: f.id, fit: look.fit || 'cover', dim: look.dim ?? 0.15 });
     toast('Background image set.');
   } catch (err) {
     toast(err.message || "Couldn't use that image.");
