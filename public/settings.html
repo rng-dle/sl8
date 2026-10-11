@@ -8,7 +8,7 @@
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
-<meta name="theme-color" content="#2a44c4">
+<meta name="theme-color" content="#0a2b48">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
@@ -44,7 +44,7 @@
 <body>
 <main class="page">
   <header class="page-top">
-    <a class="wordmark" href="/">Think<b>SL8</b></a>
+    <a class="wordmark" href="/">Think<span data-mark></span></a>
     <a class="btn quiet" id="back" href="/">Back to canvas</a>
   </header>
 
@@ -118,11 +118,13 @@
         <label><input type="radio" name="theme" value="dark"><span>Dark</span></label>
       </div>
     </div>
-    <div class="pref"><h3>Canvas background</h3>
+    <div class="pref"><h3>Default pattern</h3><p class="help sub" style="margin:0">For canvases without their own look. Each canvas can have its own theme, colours, pattern and image from its ⋯ menu.</p>
       <div class="seg" role="radiogroup" aria-label="Canvas background">
         <label><input type="radio" name="bg" value="dots"><span>Dots</span></label>
         <label><input type="radio" name="bg" value="grid"><span>Grid</span></label>
+        <label><input type="radio" name="bg" value="graph"><span>Graph</span></label>
         <label><input type="radio" name="bg" value="lines"><span>Lines</span></label>
+        <label><input type="radio" name="bg" value="iso"><span>Isometric</span></label>
         <label><input type="radio" name="bg" value="plain"><span>Plain</span></label>
       </div>
     </div>
@@ -133,6 +135,19 @@
         <label><input type="radio" name="reveal" value="off"><span>Off</span></label>
       </div>
       <p class="help sub">Plays when you open ThinkSL8. It's always off if your device asks for reduced motion.</p>
+    </div>
+    <div class="pref"><h3>Tear sound</h3>
+      <div class="seg" role="radiogroup" aria-label="Tear sound">
+        <label><input type="radio" name="tear" value="rip"><span>Paper rip</span></label>
+        <label><input type="radio" name="tear" value="own"><span>Your own</span></label>
+        <label><input type="radio" name="tear" value="off"><span>Off</span></label>
+      </div>
+      <div class="row">
+        <span id="tear-own" class="row" hidden><label class="btn" for="tear-file">Choose a sound…</label><span class="sub" id="tear-name">No sound chosen yet</span></span>
+        <input id="tear-file" type="file" accept="audio/*,.mp3,.m4a,.wav,.ogg,.opus,.flac" hidden>
+        <button class="btn quiet" id="tear-play" type="button">Play</button>
+      </div>
+      <p class="help sub">Plays as the page tears open. Your own can be any audio file up to 10 MB, like an MP3. Only its first 6 seconds play.</p>
     </div>
     <p class="help sub">These settings are saved on this device.</p>
   </section>
@@ -179,6 +194,7 @@
 </main>
 <div id="toast" class="toast" role="alert" hidden></div>
 <script src="/common.js"></script>
+<script src="/sounds.js"></script>
 <script>
 const $ = (s) => document.querySelector(s);
 const SCOPE_TEXT = { selection: 'the notes you select', canvas: 'the canvas you ask from', all: 'any of your canvases' };
@@ -324,6 +340,34 @@ function bindPref(name, key, fallback, apply) {
 bindPref('theme', 'sl8:theme', '', applyTheme);
 bindPref('bg', 'sl8:bg', 'dots');
 bindPref('reveal', 'sl8:revealMode', store.get('sl8:revealSeen') ? 'short' : 'full');
+
+// tear sound (this device): the built-in rip, the user's own audio file, or nothing
+let playTear = tearSoundPlayer();
+const tearUi = (v = store.get('sl8:tearSound') ?? 'rip') => {
+  $('#tear-own').hidden = v !== 'own';
+  $('#tear-play').hidden = v === 'off';
+  playTear = tearSoundPlayer();
+};
+let hasTearFile = false;
+bindPref('tear', 'sl8:tearSound', 'rip', (v) => { tearUi(v); if (v === 'own' && !hasTearFile) $('#tear-file').click(); });
+tearUi();
+tearFile.get().then((f) => { if (f) { hasTearFile = true; $('#tear-name').textContent = f.name; } });
+$('#tear-play').onclick = () => playTear();
+$('#tear-file').onchange = async () => {
+  const f = $('#tear-file').files[0];
+  $('#tear-file').value = '';
+  if (!f) return;
+  if (f.size > 10e6) return toast('Choose a sound under 10 MB.');
+  const audio = new Audio(URL.createObjectURL(f));
+  try { await audio.play(); } catch { return toast("That file can't be played as a sound here. Try an MP3."); }
+  setTimeout(() => audio.pause(), TEAR_MAX_MS);
+  try {
+    await tearFile.set(f);
+    hasTearFile = true;
+    $('#tear-name').textContent = f.name;
+    playTear = tearSoundPlayer();
+  } catch { toast("This browser couldn't keep the sound. It may be in private mode."); }
+};
 
 $('#logout').onclick = async () => {
   try { await api('/api/logout', { method: 'POST' }); } catch {}

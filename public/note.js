@@ -1,4 +1,4 @@
-// ThinkSL8 canvas: infinite canvas with pressure ink, highlighter, eraser, text boxes and selection.
+// ThinkSL8 canvas: infinite canvas with pens, highlighter, eraser, text, connections, portals and selection.
 // Items live in world coordinates; the camera maps world -> screen as screen = world * z + (x, y).
 // ai-panel.js loads after this file and uses its globals (items, selection, commit, focusItem, ...).
 const $ = (s) => document.querySelector(s);
@@ -7,16 +7,33 @@ const board = $('#board'), base = $('#base'), live = $('#live'), textsEl = $('#t
 const bctx = base.getContext('2d'), lctx = live.getContext('2d');
 const statusEl = $('#status'), titleEl = $('#title');
 
-const COLORS = ['ink', 'blue', 'red', 'green', 'yellow'];
-const SIZES = { pen: [1.5, 3, 6], hl: [12, 20, 32], text: [16, 22, 32] };
+// Named colours follow the canvas theme (see --ink-* in style.css); anything else is a fixed #rrggbb.
+const COLORS = ['ink', 'blue', 'red', 'green', 'yellow', 'orange', 'purple', 'teal', 'pink'];
+const PRESETS = { pen: ['ink', 'blue', 'red', 'green', 'orange', 'purple', 'teal', 'pink'], hl: ['yellow', 'green', 'blue', 'pink', 'orange'] };
+PRESETS.text = PRESETS.pen;
+const HEX = /^#[0-9a-f]{6}$/i;
+const PEN_TYPES = {
+  pen: ['Pen', '<path d="M12 20h9"/><path d="M16.4 3.6a2.1 2.1 0 0 1 3 3L7.4 18.6a2 2 0 0 1-.9.5l-2.9.8a.5.5 0 0 1-.6-.6l.8-2.9a2 2 0 0 1 .5-.9z"/>'],
+  pencil: ['Pencil', '<path d="m15 5 4 4"/><path d="M18 2.5 21.5 6 8 19.5 3 21l1.5-5z"/><path d="m3 21 2-2"/>'],
+  marker: ['Marker', '<path d="M9 15 5 19l-2 2h5l2-2"/><path d="m15.5 4.5 4 4L11 17l-4-4z"/><path d="m14 6 4 4"/>'],
+  brush: ['Brush', '<path d="M18.4 2.6a2 2 0 0 1 3 3L12 15l-3-3z"/><path d="M9 12c-3 0-5 2-5 5 0 1.5-.5 3-2 4 4 0 9-1 9-6"/>'],
+  nib: ['Calligraphy nib', '<path d="m12 19 7-7 3 3-7 7z"/><path d="m18 13-1.5-7.5L2 2l3.5 14.5L13 18z"/><path d="m2 2 7.6 7.6"/><circle cx="11" cy="11" r="2"/>'],
+};
+const WIDTH = { pen: [1, 30], hl: [6, 60], text: [12, 72] }; // slider range per tool
 const BATCH = 40; // must match MAX_OPS on the server
 const ERASER_PX = 10;
 
+const saved = store.get('sl8:tools') || {};
 const tool = {
   name: 'select',
-  color: store.get('sl8:color') || { pen: 'ink', hl: 'yellow', text: 'ink' },
-  size: store.get('sl8:size') || { pen: 1, hl: 1, text: 1 },
+  type: PEN_TYPES[saved.type] ? saved.type : 'pen',
+  color: { pen: 'ink', hl: 'yellow', text: 'ink', ...saved.color },
+  width: { pen: 3, hl: 20, text: 20, ...saved.width },
 };
+let recentColors = (store.get('sl8:recentColors') || []).filter((c) => HEX.test(c));
+const saveTools = () => store.set('sl8:tools', { type: tool.type, color: tool.color, width: tool.width });
+const colorOf = (c) => palette[c] || (HEX.test(c) ? c : palette.ink);
+const cssColor = (c) => (HEX.test(c) ? c : `var(--ink-${COLORS.includes(c) ? c : 'ink'})`);
 const items = new Map(); // id -> item
 const selection = new Set(); // ids of selected items
 let sorted = null; // items ordered by creation time, rebuilt on demand
@@ -27,11 +44,46 @@ let spaceDown = false;
 
 /* ---------- drawing ---------- */
 const pf = (pr) => 0.25 + 1.5 * pr; // pressure -> width factor
+// How wide a stroke is at point i (an index into p), as a multiple of s.w, for each pen type.
+function widthAt(s, i) {
+  const p = s.p, pr = p[i + 2];
+  switch (s.pt) {
+    case 'brush': { // strong pressure response, tapered ends
+      const n = p.length / 3, k = i / 3, taper = Math.min(1, (k + 1) / 6, (n - k) / 6);
+      return (s.pr ? 0.15 + 2 * pr : 1.1) * (0.35 + 0.65 * taper);
+    }
+    case 'nib': { // broad nib held at 45 degrees: thick on one diagonal, hairline on the other
+      const j = i >= 3 ? i - 3 : Math.min(i + 3, p.length - 3);
+      const a = Math.atan2(p[i + 1] - p[j + 1], p[i] - p[j]);
+      return 0.15 + 0.95 * Math.abs(Math.sin(a - Math.PI / 4));
+    }
+    case 'marker': return 1;
+    case 'pencil': return s.pr ? 0.55 + 0.6 * pr : 0.9;
+    default: return s.pr ? pf(pr) : 1;
+  }
+}
+const maxWidth = (s) => s.w * (s.pt === 'brush' ? 2.2 : s.pt === 'nib' ? 1.1 : s.pr ? 1.75 : 1);
+// pencil grain: a speckled pattern of the ink colour, cached per canvas context and colour
+const grains = new Map();
+function pencilGrain(ctx, color) {
+  const key = (ctx === bctx ? 'b' : 'l') + color;
+  let pat = grains.get(key);
+  if (!pat) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 48;
+    const g = c.getContext('2d');
+    g.fillStyle = color;
+    for (let i = 0; i < 1100; i++) { g.globalAlpha = 0.15 + Math.random() * 0.85; g.fillRect(Math.random() * 48, Math.random() * 48, 1.3, 1.3); }
+    pat = ctx.createPattern(c, 'repeat');
+    grains.set(key, pat);
+  }
+  return pat;
+}
 const bboxes = new WeakMap();
 function bbox(s) {
   let b = bboxes.get(s);
   if (!b) {
-    const p = s.p, pad = s.w * (s.pr ? 1.75 : 1) / 2;
+    const p = s.p, pad = maxWidth(s) / 2;
     b = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
     for (let i = 0; i < p.length; i += 3) {
       b.x0 = Math.min(b.x0, p[i]); b.x1 = Math.max(b.x1, p[i]);
@@ -45,16 +97,17 @@ function bbox(s) {
 
 function drawStroke(ctx, s) {
   const p = s.p;
-  const color = palette[s.c] || palette.ink;
-  ctx.globalAlpha = s.hl ? palette.hlAlpha : 1;
-  ctx.strokeStyle = ctx.fillStyle = color;
+  const color = colorOf(s.c);
+  ctx.globalAlpha = s.hl ? palette.hlAlpha : s.pt === 'marker' ? 0.9 : s.pt === 'pencil' ? 0.85 : 1;
+  ctx.strokeStyle = ctx.fillStyle = s.pt === 'pencil' ? pencilGrain(ctx, color) : color;
   ctx.lineCap = ctx.lineJoin = 'round';
+  const even = s.pt === 'marker' || (!s.pr && s.pt !== 'brush' && s.pt !== 'nib');
   if (p.length === 3) {
     ctx.beginPath();
-    ctx.arc(p[0], p[1], (s.pr ? s.w * pf(p[2]) : s.w) / 2, 0, Math.PI * 2);
+    ctx.arc(p[0], p[1], (s.w * widthAt(s, 0)) / 2, 0, Math.PI * 2);
     ctx.fill();
-  } else if (!s.pr) {
-    ctx.lineWidth = s.w;
+  } else if (even) {
+    ctx.lineWidth = s.w * widthAt(s, 0);
     ctx.beginPath();
     ctx.moveTo(p[0], p[1]);
     for (let i = 3; i < p.length - 3; i += 3) {
@@ -68,7 +121,7 @@ function drawStroke(ctx, s) {
     for (let i = 3; i < p.length; i += 3) {
       const last = i >= p.length - 3;
       const mx = last ? p[i] : (p[i] + p[i + 3]) / 2, my = last ? p[i + 1] : (p[i + 1] + p[i + 4]) / 2;
-      ctx.lineWidth = s.w * pf(p[i + 2]);
+      ctx.lineWidth = s.w * widthAt(s, i);
       ctx.beginPath();
       ctx.moveTo(px, py);
       ctx.quadraticCurveTo(p[i], p[i + 1], mx, my);
@@ -101,12 +154,79 @@ function paintBase() {
     if (b.x1 < vx0 || b.x0 > vx1 || b.y1 < vy0 || b.y0 > vy1) continue;
     drawStroke(bctx, it);
   }
+  for (const it of sorted) if (it.kind === 'conn') drawConn(bctx, it);
+}
+
+/* ---------- connections ---------- */
+// Where a line from the centre of rect r toward (tx, ty) leaves r, with a little breathing room.
+function edgePoint(r, tx, ty) {
+  const cx = (r.x0 + r.x1) / 2, cy = (r.y0 + r.y1) / 2, pad = 8;
+  const hw = (r.x1 - r.x0) / 2 + pad, hh = (r.y1 - r.y0) / 2 + pad, dx = tx - cx, dy = ty - cy;
+  const k = Math.min(hw / Math.abs(dx || 1e-9), hh / Math.abs(dy || 1e-9), 1);
+  return [cx + dx * k, cy + dy * k];
+}
+function connEnds(c) {
+  const A = items.get(c.a), B = items.get(c.b);
+  if (!A || !B) return null; // one end was erased; the arrow comes back if it does
+  const ra = itemRect(A), rb = itemRect(B);
+  if (!ra || !rb) return null;
+  const a = edgePoint(ra, (rb.x0 + rb.x1) / 2, (rb.y0 + rb.y1) / 2), b = edgePoint(rb, (ra.x0 + ra.x1) / 2, (ra.y0 + ra.y1) / 2);
+  return Math.hypot(b[0] - a[0], b[1] - a[1]) < 6 ? null : [a, b];
+}
+function arrow(ctx, [x1, y1], [x2, y2], color, width) {
+  ctx.strokeStyle = ctx.fillStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+  const ang = Math.atan2(y2 - y1, x2 - x1), L = 10 + width * 2;
+  ctx.beginPath();
+  ctx.moveTo(x2, y2);
+  ctx.lineTo(x2 - L * Math.cos(ang - 0.4), y2 - L * Math.sin(ang - 0.4));
+  ctx.lineTo(x2 - L * Math.cos(ang + 0.4), y2 - L * Math.sin(ang + 0.4));
+  ctx.closePath(); ctx.fill();
+}
+function drawConn(ctx, c, highlight) {
+  const e = connEnds(c);
+  if (!e) return;
+  ctx.globalAlpha = highlight ? 1 : 0.85;
+  arrow(ctx, e[0], e[1], highlight ? palette.accent : colorOf(c.c), highlight ? 3 : 2);
+  ctx.globalAlpha = 1;
+  if (c.label) {
+    const mx = (e[0][0] + e[1][0]) / 2, my = (e[0][1] + e[1][1]) / 2;
+    ctx.font = `600 14px ${palette.font}`;
+    const w = ctx.measureText(c.label).width + 14;
+    ctx.fillStyle = palette.paper;
+    ctx.beginPath(); ctx.roundRect(mx - w / 2, my - 12, w, 24, 8); ctx.fill();
+    ctx.fillStyle = palette.text;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(c.label, mx, my + 1);
+  }
+}
+function distToSegment(x, y, [ax, ay], [bx, by]) {
+  const dx = bx - ax, dy = by - ay, len2 = dx * dx + dy * dy;
+  const t = len2 ? Math.max(0, Math.min(1, ((x - ax) * dx + (y - ay) * dy) / len2)) : 0;
+  return Math.hypot(x - ax - t * dx, y - ay - t * dy);
 }
 function paintLive() {
   clear(lctx);
   if (gesture?.kind === 'draw' && gesture.stroke.p.length) {
     setCam(lctx);
     drawStroke(lctx, gesture.stroke);
+  }
+  if (gesture?.kind === 'connect') {
+    setCam(lctx);
+    const from = items.get(gesture.from), over = gesture.over && items.get(gesture.over);
+    if (from) {
+      const target = over ? itemRect(over) : null;
+      const to = target ? edgePoint(target, ...edgePoint(itemRect(from), gesture.x, gesture.y)) : [gesture.x, gesture.y];
+      lctx.setLineDash([8, 6]);
+      arrow(lctx, edgePoint(itemRect(from), ...to), to, palette.accent, 2.5);
+      lctx.setLineDash([]);
+    }
+  }
+  for (const id of selection) {
+    const it = items.get(id);
+    if (it?.kind === 'conn') { setCam(lctx); drawConn(lctx, it, true); }
   }
   const d = devicePixelRatio || 1;
   const box = (b, fill) => {
@@ -136,11 +256,62 @@ function paintLive() {
 }
 function paintView() {
   textsEl.style.transform = `translate(${cam.x}px, ${cam.y}px) scale(${cam.z})`;
-  let g = 24 * cam.z;
-  while (g < 10) g *= 4;
-  board.style.backgroundSize = `${g}px ${g}px`;
-  board.style.backgroundPosition = `${cam.x}px ${cam.y}px`;
+  paintBackground();
   $('#zoom').textContent = Math.round(cam.z * 100) + '%';
+}
+
+/* ---------- this canvas's look: theme, colours, pattern, image ---------- */
+let look = {};
+const imageSizes = new Map();
+function paintBackground() {
+  const pattern = look.pattern || store.get('sl8:bg') || 'dots';
+  let g = (look.size || 24) * cam.z;
+  while (g < 10) g *= 4;
+  const L = [], S = [], P = [], R = [];
+  const add = (layer, size, pos, rep = 'repeat') => { L.push(layer); S.push(size); P.push(pos); R.push(rep); };
+  const at = `${cam.x}px ${cam.y}px`, cell = `${g}px ${g}px`;
+  const rule = 'var(--rule)', faint = 'color-mix(in srgb, var(--rule) 55%, transparent)';
+  const line = (dir, color, w = 1) => `linear-gradient(${dir}, ${color} ${w}px, transparent ${w}px)`;
+  if (pattern === 'dots') add(`radial-gradient(circle, ${rule} 1.1px, transparent 1.5px)`, cell, at);
+  if (pattern === 'grid') { add(line('to bottom', faint), cell, at); add(line('to right', faint), cell, at); }
+  if (pattern === 'graph') {
+    const major = `${g * 5}px ${g * 5}px`;
+    add(line('to bottom', rule, 1.5), major, at); add(line('to right', rule, 1.5), major, at);
+    add(line('to bottom', faint), cell, at); add(line('to right', faint), cell, at);
+  }
+  if (pattern === 'lines') add(line('to bottom', faint), cell, at);
+  if (pattern === 'iso') { // triangular dot grid: every other row shifted by half a cell
+    const h = g * Math.sqrt(3), size = `${g}px ${h}px`;
+    add(`radial-gradient(circle, ${rule} 1.1px, transparent 1.5px)`, size, at);
+    add(`radial-gradient(circle, ${rule} 1.1px, transparent 1.5px)`, size, `${cam.x + g / 2}px ${cam.y + h / 2}px`);
+  }
+  const paper = look.paper || 'var(--paper)';
+  if (look.image) {
+    if (look.dim) add(`linear-gradient(color-mix(in srgb, ${paper} ${Math.round(look.dim * 100)}%, transparent), color-mix(in srgb, ${paper} ${Math.round(look.dim * 100)}%, transparent))`, 'auto', '0 0', 'no-repeat');
+    const url = `url("${fileUrl(look.image)}")`, dims = imageSizes.get(look.image);
+    if (look.fit === 'tile') add(url, dims ? `${dims[0] * cam.z}px ${dims[1] * cam.z}px` : 'auto', at);
+    else add(url, 'cover', 'center', 'no-repeat');
+  }
+  board.style.backgroundImage = L.join(', ') || 'none';
+  board.style.backgroundSize = S.join(', ');
+  board.style.backgroundPosition = P.join(', ');
+  board.style.backgroundRepeat = R.join(', ');
+  board.style.backgroundColor = look.paper || '';
+  board.style.setProperty('--rule', look.rule || 'var(--dot)');
+}
+const luminance = (hex) => {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+// A custom background colour picks light or dark ink automatically unless a theme is chosen.
+function applyLook() {
+  applyTheme(look.theme || (look.paper ? (luminance(look.paper) < 0.45 ? 'dark' : 'light') : store.get('sl8:theme')));
+  if (look.image && look.fit === 'tile' && !imageSizes.has(look.image)) {
+    const img = new Image();
+    img.onload = () => { imageSizes.set(look.image, [img.naturalWidth, img.naturalHeight]); schedule(true); };
+    img.src = fileUrl(look.image);
+  }
+  schedule(true);
 }
 
 let raf = 0, needBase = false, needLive = false;
@@ -183,20 +354,32 @@ function readPalette() {
   palette.hlAlpha = parseFloat(cs.getPropertyValue('--hl-alpha')) || 0.38;
   palette.accent = cs.getPropertyValue('--accent').trim();
   palette.accentSoft = `color-mix(in srgb, ${palette.accent} 10%, transparent)`;
+  palette.paper = look.paper || cs.getPropertyValue('--paper').trim();
+  palette.text = cs.getPropertyValue('--text').trim();
+  palette.font = cs.getPropertyValue('--font-ui').trim();
+  grains.clear();
 }
 
 /* ---------- items, undo, saving ---------- */
 const textEls = new Map();
 let undoStack = [], redoStack = [];
 
+let connCount = 0;
 function apply(id, item, save = true) {
+  const prev = items.get(id);
+  connCount += (item?.kind === 'conn') - (prev?.kind === 'conn');
   if (item) items.set(id, item); else { items.delete(id); selection.delete(id); }
   sorted = null;
-  if (item?.kind === 'text') renderText(item);
-  else if (!item && textEls.has(id)) { textEls.get(id).remove(); textEls.delete(id); }
+  if (item) renderDom(item);
+  else if (textEls.has(id)) { textEls.get(id).remove(); textEls.delete(id); }
   if (save) queue(id, item);
+  // arrows hang off other items, so anything but a plain new stroke can move them
+  if (item?.kind !== 'stroke' && (connCount || item?.kind === 'conn' || prev?.kind === 'conn')) schedule(true);
   updateHint();
 }
+const renderDom = (it) => (it.kind === 'text' ? renderText(it) : it.kind === 'portal' ? renderPortal(it) : null);
+// arrows attached to any of these items
+const connsOf = (ids) => [...items.values()].filter((it) => it.kind === 'conn' && (ids.has(it.a) || ids.has(it.b)));
 function commit(changes) {
   if (!changes.length) return;
   for (const c of changes) apply(c.id, c.after);
@@ -287,16 +470,10 @@ async function send(keepalive) {
 addEventListener('visibilitychange', () => document.visibilityState === 'hidden' && flush(true));
 addEventListener('beforeunload', (e) => { if (pending.size && !stopped && !leaving) e.preventDefault(); });
 // finish saving before going back; anything still unsent stays on this device and is sent next time
-$('#back').addEventListener('click', async (e) => {
+$('#back').addEventListener('click', (e) => {
   if (!pending.size || stopped) return;
   e.preventDefault();
-  clearTimeout(saveTimer);
-  for (let i = 0; i < 30 && pending.size && !stopped; i++) {
-    await flush();
-    if (retryDelay) break;
-  }
-  leaving = true;
-  location.href = '/canvases';
+  leaveTo('/canvases');
 });
 
 /* ---------- text boxes ---------- */
@@ -311,7 +488,7 @@ function renderText(it) {
   el.style.top = it.y + 'px';
   el.style.width = it.w + 'px';
   el.style.setProperty('--fs', it.s + 'px');
-  el.style.setProperty('--c', `var(--ink-${it.c})`);
+  el.style.setProperty('--c', cssColor(it.c));
   const ta = el.querySelector('textarea');
   if (ta.value !== it.text && document.activeElement !== ta) ta.value = it.text;
   autosize(ta);
@@ -338,8 +515,9 @@ function makeTextEl(id) {
     if (!cur || el._gone) return;
     el._isNew = false;
     if (!cur.text.trim()) {
-      if (before) commit([{ id, before, after: null }]);
-      else apply(id, null, !!el._sent);
+      const arrows = connsOf(new Set([id]));
+      if (before) commit([{ id, before, after: null }, ...arrows.map((c) => ({ id: c.id, before: c, after: null }))]);
+      else { apply(id, null, !!el._sent); for (const c of arrows) apply(c.id, null); }
     } else if (!before || before.text !== cur.text) {
       undoStack.push([{ id, before, after: cur }]);
       redoStack = [];
@@ -366,8 +544,9 @@ function makeTextEl(id) {
   el.querySelector('.tb-del').addEventListener('click', () => {
     const cur = items.get(id);
     el._gone = true;
-    if (!el._isNew) commit([{ id, before: before || cur, after: null }]);
-    else apply(id, null, !!el._sent);
+    const arrows = connsOf(new Set([id])).map((c) => ({ id: c.id, before: c, after: null }));
+    if (!el._isNew) commit([{ id, before: before || cur, after: null }, ...arrows]);
+    else { apply(id, null, !!el._sent); commit(arrows); }
   });
   const mv = el.querySelector('.tb-move');
   mv.addEventListener('pointerdown', (e) => {
@@ -403,7 +582,7 @@ function makeTextEl(id) {
   return el;
 }
 function newText(wx, wy) {
-  const s = SIZES.text[tool.size.text];
+  const s = tool.width.text;
   const it = { id: crypto.randomUUID(), kind: 'text', t: Date.now(), x: Math.round(wx), y: Math.round(wy - s * 0.8), w: 320, s, c: tool.color.text, text: '' };
   items.set(it.id, it);
   const el = makeTextEl(it.id);
@@ -411,20 +590,96 @@ function newText(wx, wy) {
   renderText(it);
   el.querySelector('textarea').focus();
   $('#hint').hidden = true;
+  return it;
+}
+
+/* ---------- portals: cards that open another canvas ---------- */
+const canvasTitles = new Map(); // id -> title, for every canvas this account has
+const PORTAL_W = 240, PORTAL_H = 132;
+function renderPortal(it) {
+  let el = textEls.get(it.id);
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'portal';
+    el.innerHTML = `${eightMark('portal-mark')}<b class="portal-title"></b><button type="button" class="portal-open">Open</button>`;
+    el.querySelector('.portal-open').addEventListener('click', () => openPortal(it.id));
+    textsEl.append(el);
+    textEls.set(it.id, el);
+    el.classList.toggle('selected', selection.has(it.id));
+  }
+  Object.assign(el.style, { left: it.x + 'px', top: it.y + 'px', width: it.w + 'px', height: it.h + 'px' });
+  const title = canvasTitles.get(it.target);
+  el.classList.toggle('missing', title === undefined);
+  el.querySelector('.portal-title').textContent = title ?? 'This canvas was deleted';
+  el.querySelector('.portal-open').setAttribute('aria-label', `Open ${title}`);
+}
+// Leave this canvas, finishing any unsent saves first (anything still unsent stays on this device).
+async function leaveTo(href) {
+  if (pending.size && !stopped) {
+    clearTimeout(saveTimer);
+    for (let i = 0; i < 30 && pending.size && !stopped; i++) {
+      await flush();
+      if (retryDelay) break;
+    }
+  }
+  leaving = true;
+  go(href);
+}
+const trail = () => { try { return JSON.parse(sessionStorage.getItem('sl8:trail')) || []; } catch { return []; } };
+const setTrail = (t) => { try { sessionStorage.setItem('sl8:trail', JSON.stringify(t.slice(-20))); } catch {} };
+async function openPortal(id) {
+  const it = items.get(id);
+  if (!it || !canvasTitles.has(it.target)) return toast("That canvas doesn't exist anymore.");
+  setTrail([...trail().filter((t) => t.id !== noteId), { id: noteId, title: titleEl.value }]);
+  const el = textEls.get(id);
+  if (el && !matchMedia('(prefers-reduced-motion: reduce)').matches) { // dive into the portal
+    const r = el.getBoundingClientRect();
+    board.style.transformOrigin = `${r.left + r.width / 2}px ${r.top + r.height / 2}px`;
+    board.animate([{ transform: 'scale(1)', opacity: 1 }, { transform: 'scale(3)', opacity: 0 }], { duration: 320, easing: 'cubic-bezier(.5,0,.75,0)', fill: 'forwards' });
+    try { sessionStorage.setItem('sl8:arrive', '1'); } catch {}
+  }
+  await Promise.all([leaveTo('/note?id=' + encodeURIComponent(it.target)), new Promise((r) => setTimeout(r, 300))]);
+}
+function addPortal(target) {
+  const [x, y] = toWorld(board.clientWidth / 2 - PORTAL_W / 2 * cam.z, board.clientHeight * 0.4);
+  const it = { id: crypto.randomUUID(), kind: 'portal', t: Date.now(), x: Math.round(x), y: Math.round(y), w: PORTAL_W, h: PORTAL_H, target };
+  commit([{ id: it.id, before: null, after: it }]);
+  setTool('select');
+  setSelection([it.id]);
 }
 
 /* ---------- selection ---------- */
 function itemRect(it) {
   if (it.kind === 'stroke') return bbox(it);
+  if (it.kind === 'portal') return { x0: it.x, y0: it.y, x1: it.x + it.w, y1: it.y + it.h };
+  if (it.kind === 'conn') {
+    const e = connEnds(it);
+    return e && { x0: Math.min(e[0][0], e[1][0]), y0: Math.min(e[0][1], e[1][1]), x1: Math.max(e[0][0], e[1][0]), y1: Math.max(e[0][1], e[1][1]) };
+  }
   const el = textEls.get(it.id);
-  return { x0: it.x, y0: it.y, x1: it.x + it.w, y1: it.y + (el ? el.offsetHeight : it.s * 1.6) };
+  return { x0: it.x, y0: it.y, x1: it.x + textWidth(it), y1: it.y + (el ? el.offsetHeight : it.s * 1.6) };
 }
+// The width the words actually take (not the whole box), so arrows and selection hug the text.
+let textWidths = new WeakMap(), measure;
+function textWidth(it) {
+  let w = textWidths.get(it);
+  if (w === undefined) {
+    measure ||= document.createElement('canvas').getContext('2d');
+    measure.font = `400 ${it.s}px ${palette.font || 'sans-serif'}`;
+    const longest = Math.max(...String(it.text || '').split('\n').map((l) => measure.measureText(l).width));
+    w = Math.min(it.w, Math.max(80, longest + 16)); // textarea padding and border
+    textWidths.set(it, w);
+  }
+  return w;
+}
+document.fonts?.ready.then(() => { textWidths = new WeakMap(); schedule(true); });
 function selBounds() {
   let b = null;
   for (const id of selection) {
     const it = items.get(id);
     if (!it) continue;
     const r = itemRect(it);
+    if (!r) continue;
     b = b ? { x0: Math.min(b.x0, r.x0), y0: Math.min(b.y0, r.y0), x1: Math.max(b.x1, r.x1), y1: Math.max(b.y1, r.y1) } : { ...r };
   }
   return b;
@@ -432,11 +687,17 @@ function selBounds() {
 function hitItem(x, y) {
   const r = 6 / cam.z;
   if (!sorted) sorted = [...items.values()].sort((a, b) => a.t - b.t);
-  for (let i = sorted.length - 1; i >= 0; i--) { // text boxes sit above ink, so they win
+  for (let i = sorted.length - 1; i >= 0; i--) { // text and portals sit above everything drawn
     const it = sorted[i];
-    if (it.kind !== 'text') continue;
+    if (it.kind !== 'text' && it.kind !== 'portal') continue;
     const b = itemRect(it);
     if (x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) return it;
+  }
+  for (let i = sorted.length - 1; i >= 0; i--) { // then arrows, then ink
+    const it = sorted[i];
+    if (it.kind !== 'conn') continue;
+    const e = connEnds(it);
+    if (e && distToSegment(x, y, e[0], e[1]) <= r + 3) return it;
   }
   for (let i = sorted.length - 1; i >= 0; i--) {
     const it = sorted[i];
@@ -453,16 +714,17 @@ function setSelection(ids) {
   schedule(false);
 }
 function inRect(it, r) {
-  if (it.kind === 'text') {
+  if (it.kind !== 'stroke') {
     const b = itemRect(it);
-    return b.x0 < r.x1 && b.x1 > r.x0 && b.y0 < r.y1 && b.y1 > r.y0;
+    return !!b && b.x0 < r.x1 && b.x1 > r.x0 && b.y0 < r.y1 && b.y1 > r.y0;
   }
   const p = it.p;
   for (let i = 0; i < p.length; i += 3) if (p[i] >= r.x0 && p[i] <= r.x1 && p[i + 1] >= r.y0 && p[i + 1] <= r.y1) return true;
   return false;
 }
 function moved(it, dx, dy) {
-  if (it.kind === 'text') return { ...it, x: Math.round(it.x + dx), y: Math.round(it.y + dy) };
+  if (it.kind === 'conn') return it; // arrows follow their ends
+  if (it.kind !== 'stroke') return { ...it, x: Math.round(it.x + dx), y: Math.round(it.y + dy) };
   const p = it.p.slice();
   for (let i = 0; i < p.length; i += 3) {
     p[i] = Math.round((p[i] + dx) * 10) / 10;
@@ -471,12 +733,14 @@ function moved(it, dx, dy) {
   return { ...it, p };
 }
 function cancelMove(g) {
-  for (const [id, it] of g.orig) { items.set(id, it); if (it.kind === 'text') renderText(it); }
+  for (const [id, it] of g.orig) { items.set(id, it); renderDom(it); }
   sorted = null;
   schedule(true);
 }
 function deleteSelection() {
-  const ch = [...selection].map((id) => ({ id, before: items.get(id), after: null })).filter((c) => c.before);
+  const ids = new Set(selection);
+  for (const c of connsOf(ids)) ids.add(c.id); // arrows go with what they connect, and come back on undo
+  const ch = [...ids].map((id) => ({ id, before: items.get(id), after: null })).filter((c) => c.before);
   setSelection([]);
   commit(ch);
   schedule(true);
@@ -573,8 +837,16 @@ function onDown(e) {
   if (e.button === 2) return;
   const penEraser = e.pointerType === 'pen' && (e.buttons & 32 || e.buttons & 2);
   if (penEraser || tool.name === 'eraser') {
-    gesture = { kind: 'erase', id: e.pointerId, removed: [] };
+    gesture = { kind: 'erase', id: e.pointerId, removed: [], lx: e.clientX, ly: e.clientY, lt: e.timeStamp };
+    scribble.start('eraser');
     eraseAt(e.clientX, e.clientY);
+    return;
+  }
+  if (tool.name === 'connect') {
+    const [x, y] = toWorld(e.clientX, e.clientY);
+    const from = hitItem(x, y);
+    if (!from || from.kind === 'conn') return toast('Start on a note, drawing or portal, then drag to another one or into empty space.');
+    gesture = { kind: 'connect', id: e.pointerId, from: from.id, x, y, sx: e.clientX, sy: e.clientY };
     return;
   }
   if (tool.name === 'text') {
@@ -600,12 +872,17 @@ function onDown(e) {
   }
   const hl = tool.name === 'hl';
   const pressure = e.pointerType === 'pen' && !hl;
-  gesture = {
-    kind: 'draw', id: e.pointerId,
-    stroke: { id: crypto.randomUUID(), kind: 'stroke', t: Date.now(), c: tool.color[tool.name], w: SIZES[tool.name][tool.size[tool.name]], hl, pr: pressure, p: [] },
-    lastPr: e.pressure || 0.5,
-  };
+  const stroke = { id: crypto.randomUUID(), kind: 'stroke', t: Date.now(), c: tool.color[tool.name], w: tool.width[tool.name], hl, pr: pressure, p: [] };
+  if (!hl && tool.type !== 'pen') stroke.pt = tool.type;
+  gesture = { kind: 'draw', id: e.pointerId, stroke, lastPr: e.pressure || 0.5, lx: e.clientX, ly: e.clientY, lt: e.timeStamp };
+  scribble.start(hl ? 'hl' : tool.type);
   addPoint(e);
+}
+// feed the writing sound with how fast the pointer is moving
+function sound(g, e) {
+  const dt = Math.max(1, e.timeStamp - g.lt);
+  scribble.move(Math.hypot(e.clientX - g.lx, e.clientY - g.ly) / dt, e.pressure || 0.5);
+  g.lx = e.clientX; g.ly = e.clientY; g.lt = e.timeStamp;
 }
 
 function addPoint(e) {
@@ -646,17 +923,24 @@ function onMove(e) {
   } else if (gesture.kind === 'draw') {
     const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
     for (const ce of evs.length ? evs : [e]) addPoint(ce);
+    sound(gesture, e);
     schedule(false);
   } else if (gesture.kind === 'erase') {
     const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
     for (const ce of evs.length ? evs : [e]) eraseAt(ce.clientX, ce.clientY);
+    sound(gesture, e);
+  } else if (gesture.kind === 'connect') {
+    [gesture.x, gesture.y] = toWorld(e.clientX, e.clientY);
+    const over = hitItem(gesture.x, gesture.y);
+    gesture.over = over && over.kind !== 'conn' && over.id !== gesture.from ? over.id : null;
+    schedule(false);
   } else if (gesture.kind === 'move') {
     const [x, y] = toWorld(e.clientX, e.clientY);
     const dx = x - gesture.x0, dy = y - gesture.y0;
     for (const [id, it] of gesture.orig) {
       const m = moved(it, dx, dy);
       items.set(id, m);
-      if (m.kind === 'text') renderText(m);
+      renderDom(m);
     }
     sorted = null;
     schedule(true);
@@ -680,6 +964,7 @@ function onUp(e) {
   if (g.id !== e.pointerId) return;
   gesture = null;
   document.body.classList.remove('panning');
+  scribble.stop();
 
   if (g.kind === 'draw' && g.stroke.p.length) {
     commit([{ id: g.stroke.id, before: null, after: g.stroke }]);
@@ -690,6 +975,22 @@ function onUp(e) {
     endErase(g);
   } else if (g.kind === 'text' && !g.wasEditing && e.type === 'pointerup' && Math.hypot(e.clientX - g.sx, e.clientY - g.sy) < 8) {
     newText(...toWorld(e.clientX, e.clientY));
+  } else if (g.kind === 'connect') {
+    schedule(false);
+    if (e.type !== 'pointerup') return;
+    const conn = (b) => ({ id: crypto.randomUUID(), kind: 'conn', t: Date.now(), a: g.from, b, c: 'ink' });
+    if (g.over) {
+      const exists = [...items.values()].some((it) => it.kind === 'conn' && it.a === g.from && it.b === g.over);
+      if (!exists) {
+        const c = conn(g.over);
+        commit([{ id: c.id, before: null, after: c }]);
+      }
+    } else if (Math.hypot(e.clientX - g.sx, e.clientY - g.sy) > 30) {
+      // dragged into empty space: start a new note there, already connected
+      const note = newText(g.x, g.y);
+      const c = conn(note.id);
+      commit([{ id: c.id, before: null, after: c }]);
+    }
   } else if (g.kind === 'move' || g.kind === 'marquee') {
     const tap = e.type === 'pointerup' && Math.hypot(e.clientX - g.sx, e.clientY - g.sy) < 6;
     if (g.kind === 'move') {
@@ -706,6 +1007,8 @@ function onUp(e) {
       const [x, y] = toWorld(e.clientX, e.clientY);
       const hit = hitItem(x, y);
       if (hit?.kind === 'text') editText(hit.id);
+      else if (hit?.kind === 'portal') openPortal(hit.id);
+      else if (hit?.kind === 'conn') editLabel(hit.id);
       else if (!g.wasEditing) { setSelection([]); newText(x, y); }
     }
     schedule(true);
@@ -739,6 +1042,7 @@ function eraseAt(sx, sy) {
     if (hitStroke(s, x, y, r)) {
       gesture.removed.push(s);
       apply(s.id, null);
+      for (const c of connsOf(new Set([s.id]))) { gesture.removed.push(c); apply(c.id, null); }
       hit = true;
     }
   }
@@ -772,33 +1076,57 @@ function setTool(name) {
 function renderOptions() {
   const t = tool.name, opts = $('#options');
   const touchScreen = matchMedia('(any-pointer: coarse)').matches;
-  const styled = !!SIZES[t];
-  opts.hidden = !styled && !(touchScreen && t === 'eraser');
-  for (const id of ['#swatches', '#sep-sizes', '#sizes']) $(id).hidden = !styled;
-  $('#finger').hidden = $('#sep-finger').hidden = !touchScreen || t === 'text';
-  $('#sep-finger').hidden ||= !styled;
+  const styled = t === 'pen' || t === 'hl' || t === 'text';
+  const show = (id, on) => ($(id).hidden = !on);
+  show('#types', t === 'pen'); show('#sep-types', t === 'pen');
+  for (const id of ['#swatches', '#custom-wrap', '#sep-width', '#width']) show(id, styled);
+  const sound = t === 'pen' || t === 'hl' || t === 'eraser', finger = touchScreen && sound; // finger drawing only matters for drawing tools
+  show('#sound', sound); show('#finger', finger); show('#sep-toggles', styled && (sound || finger));
+  opts.hidden = !styled && !sound && !finger;
   updateFinger();
+  $('#sound').setAttribute('aria-pressed', String(scribble.on));
   if (!styled) return;
-  $('#swatches').replaceChildren(...COLORS.filter((c) => (t === 'hl' ? c !== 'ink' : c !== 'yellow')).map((c) => {
+  if (t === 'pen') {
+    $('#types').replaceChildren(...Object.entries(PEN_TYPES).map(([k, [label, icon]]) => {
+      const b = document.createElement('button');
+      b.className = 'icon-btn';
+      b.title = label;
+      b.setAttribute('aria-label', label);
+      b.setAttribute('aria-pressed', String(tool.type === k));
+      b.innerHTML = `<svg viewBox="0 0 24 24">${icon}</svg>`;
+      b.onclick = () => { tool.type = k; saveTools(); renderOptions(); };
+      return b;
+    }));
+  }
+  const presets = [...PRESETS[t], ...recentColors.filter((c) => !PRESETS[t].includes(c))];
+  $('#swatches').replaceChildren(...presets.map((c) => {
     const b = document.createElement('button');
     b.className = 'swatch';
-    b.setAttribute('aria-label', c === 'ink' ? 'Default ink' : c);
+    b.setAttribute('aria-label', HEX.test(c) ? `Colour ${c}` : c === 'ink' ? 'Default ink' : c);
     b.setAttribute('aria-pressed', String(tool.color[t] === c));
-    b.innerHTML = `<span style="--c: var(--ink-${c})"></span>`;
-    b.onclick = () => { tool.color[t] = c; store.set('sl8:color', tool.color); renderOptions(); };
+    b.innerHTML = `<span style="--c: ${cssColor(c)}"></span>`;
+    b.onclick = () => { tool.color[t] = c; saveTools(); renderOptions(); };
     return b;
   }));
-  $('#sizes').replaceChildren(...SIZES[t].map((_, i) => {
-    const b = document.createElement('button');
-    b.className = 'size';
-    b.setAttribute('aria-label', ['Fine', 'Medium', 'Bold'][i]);
-    b.setAttribute('aria-pressed', String(tool.size[t] === i));
-    const d = [5, 9, 14][i];
-    b.innerHTML = `<span style="width:${d}px;height:${d}px"></span>`;
-    b.onclick = () => { tool.size[t] = i; store.set('sl8:size', tool.size); renderOptions(); };
-    return b;
-  }));
+  const current = colorOf(tool.color[t]);
+  $('#custom-color').value = HEX.test(current) ? current : '#000000';
+  const [lo, hi] = WIDTH[t], w = $('#width');
+  w.min = lo; w.max = hi; w.step = t === 'pen' ? 0.5 : 1; w.value = tool.width[t];
+  w.setAttribute('aria-label', t === 'text' ? 'Text size' : 'Line width');
 }
+// any colour: the native picker gives RGB, HSL and hex on every platform
+$('#custom-color').addEventListener('input', (e) => { tool.color[tool.name] = e.target.value; saveTools(); });
+$('#custom-color').addEventListener('change', (e) => {
+  recentColors = [e.target.value, ...recentColors.filter((c) => c !== e.target.value)].slice(0, 4);
+  store.set('sl8:recentColors', recentColors);
+  renderOptions();
+});
+$('#width').addEventListener('input', (e) => { tool.width[tool.name] = Number(e.target.value); saveTools(); });
+$('#sound').onclick = () => {
+  scribble.on = !scribble.on;
+  renderOptions();
+  toast(scribble.on ? 'Writing sounds on.' : 'Writing sounds off.');
+};
 for (const b of document.querySelectorAll('[data-tool]')) b.onclick = () => setTool(b.dataset.tool);
 $('#undo').onclick = undo;
 $('#redo').onclick = redo;
@@ -814,7 +1142,7 @@ addEventListener('keydown', (e) => {
   if (typing || mod || e.altKey) return;
   if ((e.key === 'Delete' || e.key === 'Backspace') && selection.size) { e.preventDefault(); deleteSelection(); return; }
   if (e.key === ' ') { spaceDown = true; document.body.classList.add('panning'); e.preventDefault(); return; }
-  const map = { v: 'select', p: 'pen', h: 'hl', e: 'eraser', t: 'text' };
+  const map = { v: 'select', p: 'pen', h: 'hl', e: 'eraser', t: 'text', c: 'connect' };
   if (map[e.key]) setTool(map[e.key]);
   else if (e.key === '0') zoomAt(board.clientWidth / 2, board.clientHeight / 2, 1 / cam.z);
   else if (e.key === '+' || e.key === '=') zoomAt(board.clientWidth / 2, board.clientHeight / 2, 1.25);
@@ -834,6 +1162,7 @@ async function saveTitle() {
   try {
     await api(`/api/notes/${noteId}`, { method: 'PATCH', body: { title } });
     savedTitle = title;
+    canvasTitles.set(noteId, title);
   } catch (e) {
     toast(e.message);
   }
@@ -858,18 +1187,144 @@ $('#menu-open').onclick = () => {
 addEventListener('pointerdown', (e) => {
   if (!$('#menu').hidden && !e.target.closest?.('#menu, #menu-open')) closeMenu();
 }, true);
-const setBg = (v) => { board.className = 'bg-' + (v || 'dots'); };
-for (const [name, key, fallback, applyFn] of [['m-theme', 'sl8:theme', '', applyTheme], ['m-bg', 'sl8:bg', 'dots', setBg]]) {
-  const v = store.get(key) ?? fallback;
-  for (const r of document.querySelectorAll(`input[name=${name}]`)) {
-    r.checked = r.value === v;
-    r.onchange = () => { store.set(key, r.value || null); applyFn(r.value); };
-  }
+// this canvas's look, saved to the canvas so it's the same on every device
+let lookTimer;
+function setLook(patch) {
+  look = { ...look, ...patch };
+  for (const k of Object.keys(look)) if (look[k] === undefined || look[k] === null || look[k] === '') delete look[k];
+  readPalette();
+  applyLook();
+  syncLookControls();
+  clearTimeout(lookTimer);
+  lookTimer = setTimeout(() => api(`/api/notes/${noteId}`, { method: 'PATCH', body: { style: look } }).catch((e) => toast(e.message)), 400);
 }
-setBg(store.get('sl8:bg'));
+function syncLookControls() {
+  const cs = getComputedStyle(board);
+  for (const r of document.querySelectorAll('input[name=c-theme]')) r.checked = r.value === (look.theme || '');
+  for (const r of document.querySelectorAll('input[name=c-pattern]')) r.checked = r.value === (look.pattern || store.get('sl8:bg') || 'dots');
+  for (const r of document.querySelectorAll('input[name=c-fit]')) r.checked = r.value === (look.fit || 'cover');
+  $('#c-size').value = look.size || 24;
+  $('#c-paper').value = look.paper || toHex(getComputedStyle(document.documentElement).getPropertyValue('--paper'));
+  $('#c-rule').value = look.rule || toHex(getComputedStyle(document.documentElement).getPropertyValue('--dot'));
+  $('#c-image-on').hidden = $('#c-dim-row').hidden = !look.image;
+  $('#c-dim').value = look.dim || 0;
+}
+function toHex(c) { // computed colours come back as #rrggbb or rgb(...)
+  c = c.trim();
+  if (HEX.test(c)) return c;
+  const m = c.match(/\d+/g);
+  return m ? '#' + m.slice(0, 3).map((n) => Number(n).toString(16).padStart(2, '0')).join('') : '#ffffff';
+}
+for (const r of document.querySelectorAll('input[name=c-theme]')) r.onchange = () => setLook({ theme: r.value, paper: undefined });
+for (const r of document.querySelectorAll('input[name=c-pattern]')) r.onchange = () => setLook({ pattern: r.value });
+for (const r of document.querySelectorAll('input[name=c-fit]')) r.onchange = () => setLook({ fit: r.value });
+$('#c-size').oninput = (e) => setLook({ size: Number(e.target.value) });
+$('#c-paper').oninput = (e) => setLook({ paper: e.target.value });
+$('#c-rule').oninput = (e) => setLook({ rule: e.target.value });
+$('#c-dim').oninput = (e) => setLook({ dim: Number(e.target.value) });
+$('#c-colors-reset').onclick = () => setLook({ paper: undefined, rule: undefined });
+$('#c-image-remove').onclick = () => setLook({ image: undefined, dim: undefined, fit: undefined });
+$('#c-image').onchange = async (e) => {
+  const file = e.target.files[0];
+  e.target.value = '';
+  if (!file) return;
+  toast('Uploading…');
+  try {
+    // shrink large photos before upload: 2560px on the long side is plenty for a background
+    const bmp = await createImageBitmap(file);
+    const k = Math.min(1, 2560 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    const keepPng = file.type === 'image/png' && k === 1 && file.size < 3e6;
+    const blob = keepPng ? file : await new Promise((r) => c.toBlob(r, 'image/jpeg', 0.86));
+    const res = await fetch('/api/files', { method: 'POST', headers: { 'content-type': blob.type }, body: blob });
+    const j = await res.json();
+    if (!res.ok) throw new Error(j.error || 'Upload failed.');
+    imageSizes.set(j.id, [c.width, c.height]);
+    setLook({ image: j.id, fit: look.fit || 'cover', dim: look.dim ?? 0.15 });
+    toast('Background image set.');
+  } catch (err) {
+    toast(err.message || "Couldn't use that image.");
+  }
+};
+
+/* ---------- adding portals ---------- */
+function closePortalMenu() { $('#portal-menu').hidden = true; }
+$('#portal-add').onclick = () => {
+  closeMenu();
+  const others = [...canvasTitles].filter(([id]) => id !== noteId);
+  $('#portal-list').replaceChildren(...others.map(([id, title]) => {
+    const li = document.createElement('li');
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = title;
+    b.onclick = () => { closePortalMenu(); addPortal(id); };
+    li.append(b);
+    return li;
+  }));
+  $('#portal-menu').hidden = false;
+  $('#portal-name').value = '';
+  $('#portal-name').focus();
+};
+$('#portal-new').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const title = $('#portal-name').value.trim() || 'Untitled';
+  try {
+    // a canvas made from here starts with this canvas's look
+    const { note } = await api('/api/notes', { method: 'POST', body: { title, style: look } });
+    canvasTitles.set(note.id, note.title);
+    closePortalMenu();
+    addPortal(note.id);
+    toast(`Portal to “${note.title}” added. Open it to start writing inside.`);
+  } catch (err) { toast(err.message); }
+});
+addEventListener('pointerdown', (e) => {
+  if (!$('#portal-menu').hidden && !e.target.closest?.('#portal-menu, #portal-add')) closePortalMenu();
+}, true);
+
+// back to the canvas this one was opened from
+function showTrail() {
+  const t = trail();
+  while (t.length && t.at(-1).id === noteId) t.pop(); // came back the way we went in
+  setTrail(t);
+  const parent = t.at(-1);
+  $('#trail').hidden = !parent;
+  if (!parent) return;
+  $('#trail-title').textContent = canvasTitles.get(parent.id) || parent.title || 'Back';
+  $('#trail').onclick = () => { setTrail(t.slice(0, -1)); leaveTo('/note?id=' + encodeURIComponent(parent.id)); };
+}
+
+/* ---------- arrow labels ---------- */
+function editLabel(id) {
+  const c = items.get(id), e = c && connEnds(c);
+  if (!e) return;
+  setSelection([id]);
+  const input = document.createElement('input');
+  input.className = 'conn-label';
+  input.value = c.label || '';
+  input.placeholder = 'Label';
+  input.maxLength = 80;
+  input.style.left = ((e[0][0] + e[1][0]) / 2) * cam.z + cam.x + 'px';
+  input.style.top = ((e[0][1] + e[1][1]) / 2) * cam.z + cam.y + 'px';
+  document.body.append(input);
+  input.focus();
+  let done = false;
+  const finish = (save) => {
+    if (done) return;
+    done = true;
+    const label = input.value.trim();
+    input.remove();
+    const cur = items.get(id);
+    if (save && cur && label !== (cur.label || '')) commit([{ id, before: cur, after: { ...cur, label: label || undefined } }]);
+  };
+  input.addEventListener('keydown', (ev) => { if (ev.key === 'Enter') finish(true); if (ev.key === 'Escape') finish(false); ev.stopPropagation(); });
+  input.addEventListener('blur', () => finish(true));
+}
+
 $('#sel-del').onclick = deleteSelection;
 
-/* ---------- the infinity reveal, played when ThinkSL8 is opened ---------- */
+/* ---------- the opening: the upright 8 from the logo, stretched until the page tears open on the canvas ---------- */
 function reveal() {
   let asked = null;
   try { asked = sessionStorage.getItem('sl8:reveal'); sessionStorage.removeItem('sl8:reveal'); } catch {}
@@ -877,21 +1332,128 @@ function reveal() {
   const mode = store.get('sl8:revealMode') || (store.get('sl8:revealSeen') ? 'short' : 'full');
   store.set('sl8:revealSeen', true);
   if (mode === 'off' || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  const [draw, open] = mode === 'full' ? [1300, 750] : [450, 380];
+  const touch = matchMedia('(pointer: coarse)').matches && mode === 'full';
+  const tearSound = tearSoundPlayer();
+
   const el = document.createElement('div');
   el.className = 'reveal';
-  el.setAttribute('aria-hidden', 'true');
-  el.style.setProperty('--draw', draw + 'ms');
-  el.style.setProperty('--open', open + 'ms');
-  el.innerHTML = '<svg viewBox="0 0 240 80"><path></path></svg>';
-  const path = el.querySelector('path');
-  path.setAttribute('d', infinityPath(120, 40, 112));
+  el.innerHTML = `<div class="half half-t"><i class="rim"></i><i class="sheet"></i></div>
+    <div class="half half-b"><i class="rim"></i><i class="sheet"></i><p class="reveal-hint" hidden>Put a finger in each loop and stretch</p><button class="reveal-skip" type="button" hidden>Skip</button></div>${eightMark('reveal-8')}`;
   document.body.append(el);
-  path.style.setProperty('--len', path.getTotalLength());
-  const timers = [setTimeout(() => el.classList.add('open'), draw), setTimeout(() => el.remove(), draw + open + 50)];
-  const skip = () => { timers.forEach(clearTimeout); el.remove(); };
-  el.addEventListener('pointerdown', skip);
-  addEventListener('keydown', skip, { once: true });
+  const svg = el.querySelector('svg'), loops = [svg.querySelector('.loop-t'), svg.querySelector('.loop-b')];
+  const [rimT, sheetT, rimB, sheetB] = el.querySelectorAll('.rim, .sheet');
+
+  // a ragged line across the middle of the page: [x as a fraction of the width, y px from the middle, fibre depth above, below]
+  const line = [];
+  for (let x = 0, wander = 0; x < 1; x += (8 + Math.random() * 10) / innerWidth) {
+    wander = Math.max(-16, Math.min(16, wander + (Math.random() - 0.5) * 9));
+    line.push([x, wander + (Math.random() - 0.5) * 7, 2 + Math.random() * 5, 2 + Math.random() * 4]);
+  }
+  line.push([1, line.at(-1)[1], 3, 3]);
+  // r (0..1): how far the rip has run out from behind the 8 towards the edges, and how wide it has opened
+  const rip = (r) => {
+    const W = innerWidth, run = r * (W / 2 + 80), gap = r * 12;
+    const edge = (side, rim) => line.map(([x, y, up, down]) => {
+      const g = gap * Math.max(0, Math.min(1, (run - Math.abs(x * W - W / 2)) / 70));
+      // the top sheet overlaps the bottom by 2px so no seam shows before the rip; each rim hides 2px behind its sheet until fibres show
+      const fibre = rim ? (side < 0 ? up : down) * Math.min(1, g / 3) - 2 : 0;
+      const off = side * (g / 2 - fibre) + (side < 0 ? 2 : 0);
+      return `${(x * 100).toFixed(2)}% calc(50% + ${(y + off).toFixed(1)}px)`;
+    }).join(',');
+    sheetT.style.clipPath = `polygon(0 0,${edge(-1)},100% 0)`;
+    rimT.style.clipPath = `polygon(0 0,${edge(-1, 1)},100% 0)`;
+    sheetB.style.clipPath = `polygon(${edge(1)},100% 100%,0 100%)`;
+    rimB.style.clipPath = `polygon(${edge(1, 1)},100% 100%,0 100%)`;
+  };
+  rip(0);
+
+  // t (0..1): tension. The loops follow the fingers; past 45% the page starts to rip; at 1 it tears through.
+  const reach = () => Math.max(120, innerHeight * 0.2); // px of extra finger distance to tear
+  let t = 0, gone = false, frame = 0;
+  const timers = [];
+  const pull = (v) => {
+    t = v;
+    stretch8(svg, (v * reach()) / 2 / svg.getScreenCTM().a);
+    rip(Math.max(0, (v - 0.45) / 0.55));
+    if (v >= 1) tear();
+  };
+  const tween = (to, ms, ease) => { // animate the tension (auto play, spring back)
+    cancelAnimationFrame(frame);
+    const from = t, t0 = performance.now();
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / ms);
+      pull(from + (to - from) * ease(k));
+      if (k < 1 && !gone) frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+  };
+  const smooth = (k) => k * k * (3 - 2 * k), back = (k) => 1 + 2.7 * (k - 1) ** 3 + 1.7 * (k - 1) ** 2;
+  const finish = () => !gone && tween(1, 380, (k) => k * k);
+  const tear = () => {
+    if (gone) return;
+    gone = true;
+    cancelAnimationFrame(frame);
+    timers.forEach(clearTimeout);
+    removeEventListener('keydown', finish);
+    tearSound();
+    rip(1);
+    el.classList.add('torn'); // the halves fly apart (CSS); each loop goes with its half
+    const u = (reach() / 2) / svg.getScreenCTM().a, fly = (innerHeight * 0.8) / svg.getScreenCTM().a;
+    loops[0].style.transform = `translateY(${-(u + fly)}px)`;
+    loops[1].style.transform = `translateY(${u + fly}px)`;
+    setTimeout(() => el.remove(), 800);
+  };
+  el.querySelector('.reveal-skip').onclick = finish;
+  addEventListener('keydown', finish);
+
+  if (!touch) { // desktop, or the short version: it stretches and tears on its own
+    timers.push(setTimeout(() => tween(1, mode === 'full' ? 1100 : 420, smooth), mode === 'full' ? 450 : 0));
+    el.addEventListener('pointerdown', finish);
+    return;
+  }
+
+  // phones and tablets: one finger in each loop, then stretch
+  timers.push(setTimeout(() => { el.querySelector('.reveal-hint').hidden = false; el.querySelector('.reveal-skip').hidden = false; }, 700));
+  timers.push(setTimeout(finish, 15000)); // never hold anyone here
+  const fingers = new Map(); // pointerId -> { loop, x, y }
+  let start = 0;
+  const holeAt = (x, y) => { // nearest free loop; anywhere on or inside it counts
+    const m = svg.getScreenCTM(), u = (t * reach()) / 2 / m.a, taken = [...fingers.values()].map((f) => f.loop);
+    return [0, 1].map((i) => ({ i, d: Math.hypot(x - m.e, y - (m.f + (i ? 1 : -1) * (80 + u) * m.d)) }))
+      .sort((a, b) => a.d - b.d).find((h) => h.d < 120 * m.a && !taken.includes(h.i))?.i ?? -1;
+  };
+  el.addEventListener('pointerdown', (e) => {
+    if (e.target.closest('.reveal-skip')) return;
+    const loop = holeAt(e.clientX, e.clientY);
+    if (loop < 0) return;
+    el.setPointerCapture(e.pointerId);
+    fingers.set(e.pointerId, { loop, x: e.clientX, y: e.clientY });
+    loops[loop].classList.add('held');
+    svg.classList.toggle('taut', fingers.size === 2);
+    if (fingers.size === 2) {
+      cancelAnimationFrame(frame);
+      const [f1, f2] = [...fingers.values()];
+      start = Math.hypot(f1.x - f2.x, f1.y - f2.y) - t * reach(); // keep any stretch still springing back
+    }
+  });
+  el.addEventListener('pointermove', (e) => {
+    const f = fingers.get(e.pointerId);
+    if (!f || gone) return;
+    f.x = e.clientX; f.y = e.clientY;
+    if (fingers.size < 2) return;
+    const [f1, f2] = [...fingers.values()];
+    pull(Math.min(1, Math.max(0, Math.hypot(f1.x - f2.x, f1.y - f2.y) - start) / reach()));
+  });
+  const lift = (e) => {
+    const f = fingers.get(e.pointerId);
+    if (!f || gone) return;
+    fingers.delete(e.pointerId);
+    loops[f.loop].classList.remove('held');
+    svg.classList.remove('taut');
+    tween(0, 520, back); // not far enough: it springs back together
+  };
+  el.addEventListener('pointerup', lift);
+  el.addEventListener('pointercancel', lift);
 }
 
 /* ---------- start ---------- */
@@ -903,14 +1465,26 @@ async function start() {
   new MutationObserver(() => { readPalette(); schedule(true); }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
   setTool(store.get('sl8:tool') || 'select');
   new ResizeObserver(resize).observe(board);
+  let arrived = false;
+  try { arrived = sessionStorage.getItem('sl8:arrive') === '1'; sessionStorage.removeItem('sl8:arrive'); } catch {}
+  if (arrived) board.animate([{ transform: 'scale(.35)', opacity: 0 }, { transform: 'scale(1)', opacity: 1 }], { duration: 340, easing: 'cubic-bezier(.2,.8,.2,1)' });
   try {
-    const { note, items: list } = await api(`/api/notes/${noteId}`);
+    const [{ note, items: list }, { notes }] = await Promise.all([
+      api(`/api/notes/${noteId}`),
+      api('/api/notes').catch(() => ({ notes: [] })), // titles for portals; portals show "deleted" without them
+    ]);
+    for (const n of notes) canvasTitles.set(n.id, n.title);
+    look = note.style || {};
+    applyLook();
+    readPalette();
+    syncLookControls();
     titleEl.value = savedTitle = note.title;
     document.title = note.title + ' · ThinkSL8';
     for (const it of list) apply(it.id, it, false);
     for (const [id, it] of store.get(pendingKey) || []) apply(id, it); // changes that never reached the server
     setStatus(pending.size ? 'Saving…' : 'Saved');
     updateHint();
+    showTrail();
     schedule(true);
     const target = location.hash.match(/^#item-([\w-]+)$/)?.[1];
     if (target) requestAnimationFrame(() => focusItem(target));

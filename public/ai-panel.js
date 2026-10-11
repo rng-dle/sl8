@@ -1,5 +1,5 @@
 // Ask AI panel. Uses note.js globals: noteId, items, selection, setSelection, selBounds, commit, focusItem,
-// toWorld, board, pending, flush, saveTimer, retryDelay, stopped, SIZES, closeMenu.
+// toWorld, board, pending, flush, saveTimer, retryDelay, stopped, closeMenu.
 // Model output is untrusted: it is only ever inserted as text nodes.
 const aiPanel = $('#ai');
 const SCOPE_ORDER = ['selection', 'canvas', 'all'];
@@ -134,7 +134,7 @@ function addToCanvas(text) {
   const clean = text.replace(/\s*\[\d+\]/g, '').trim();
   const sb = selBounds();
   const [wx, wy] = sb ? [sb.x1 + 40, sb.y0] : toWorld((board.clientWidth - (innerWidth > 640 ? 424 : 0)) / 2 - 180, board.clientHeight * 0.25);
-  const it = { id: crypto.randomUUID(), kind: 'text', t: Date.now(), x: Math.round(wx), y: Math.round(wy), w: 360, s: SIZES.text[0], c: 'ink', text: clean };
+  const it = { id: crypto.randomUUID(), kind: 'text', t: Date.now(), x: Math.round(wx), y: Math.round(wy), w: 360, s: 16, c: 'ink', text: clean };
   commit([{ id: it.id, before: null, after: it }]);
   requestAnimationFrame(() => focusItem(it.id));
   toast('Added to your canvas. Undo removes it.');
