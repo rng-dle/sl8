@@ -155,7 +155,7 @@ with sync_playwright() as p:
     import wave
     wav = f"{OUT}/tear.wav"
     with wave.open(wav, "wb") as w: w.setnchannels(1); w.setsampwidth(2); w.setframerate(8000); w.writeframes(bytes(16000))
-    pg.add_init_script("HTMLMediaElement.prototype.play = function () { (window.__played ||= []).push(this.src); return Promise.resolve(); }")
+    pg.add_init_script("const realPlay = HTMLMediaElement.prototype.play; HTMLMediaElement.prototype.play = function () { (window.__played ||= []).push(this.src); return realPlay.call(this); }")
     pg.goto(B + "/settings")
     with pg.expect_file_chooser() as fc: pg.click("input[name=tear][value=own]")
     fc.value.set_files(wav)
@@ -190,6 +190,41 @@ with sync_playwright() as p:
     ok("#ffffff" in svg and "#d0021b" in svg and "#0a2b48" not in svg, "the tab icon is redrawn in the chosen colours")
     pg.click("#logo-reset")
     ok("bg=" not in pg.evaluate("document.querySelector('link[rel=icon]').getAttribute('href')"), "Reset goes back to navy and sky")
+
+    # photos and videos on the canvas, under the ink
+    import subprocess
+    png, webm, mp4 = f"{OUT}/photo.png", f"{OUT}/clip.webm", f"{OUT}/clip.mp4"
+    Image.new("RGB", (800, 600), (210, 40, 40)).save(png)
+    for out, codec in ((webm, ["-c:v", "libvpx", "-b:v", "300k"]), (mp4, ["-c:v", "libx264", "-pix_fmt", "yuv420p"])):
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=320x180:rate=15:duration=3", *codec, out], check=True)
+    pg.goto(home)
+    pg.wait_for_selector("#status:text('Saved')")
+    pg.set_input_files("#media-file", [png, webm])
+    pg.wait_for_function("[...items.values()].filter((i) => i.kind === 'image' || i.kind === 'video').length === 2", timeout=20000)
+    img = next(i for i in items(pg, "image")); vid = next(i for i in items(pg, "video"))
+    ok(abs(img["w"] / img["h"] - 4 / 3) < 0.02 and abs(vid["w"] / vid["h"] - 16 / 9) < 0.02, "a photo and a video land on the canvas, in proportion")
+    pg.wait_for_timeout(800)
+    centre = """(id) => { const it = items.get(id), d = devicePixelRatio; return [...bctx.getImageData(((it.x + it.w / 2) * cam.z + cam.x) * d, ((it.y + it.h / 4) * cam.z + cam.y) * d, 1, 1).data]; }"""
+    px = pg.evaluate(centre, img["id"])
+    ok(px[0] > 150 and px[1] < 90, "the photo is drawn on the canvas", str(px))
+    pg.wait_for_selector("#status:text('Saved')")
+    pg.reload(); pg.wait_for_selector("#status:text('Saved')"); pg.wait_for_timeout(800)
+    ok(len(items(pg, "image")) == 1 and len(items(pg, "video")) == 1 and pg.evaluate(centre, img["id"])[0] > 150, "they're still there after reloading")
+    pg.evaluate("(id) => setSelection([id])", vid["id"])
+    pg.click("#sel-play"); pg.wait_for_timeout(900)
+    playing = pg.evaluate("(id) => { const v = mediaEl(items.get(id)); return !v.paused && v.currentTime > 0; }", vid["id"])
+    pg.click("#sel-play"); pg.wait_for_timeout(200)
+    ok(playing and pg.evaluate("(id) => mediaEl(items.get(id)).paused", vid["id"]), "a video plays and pauses")
+    r = pg.evaluate("""(id) => fetch('/api/files/' + id, { headers: { range: 'bytes=0-99' } }).then((r) => [r.status, r.headers.get('content-range'), r.headers.get('accept-ranges')])""", vid["file"])
+    ok(r[0] == 206 and r[1].startswith("bytes 0-99/") and r[2] == "bytes", "videos can seek (byte ranges)", str(r))
+    pg.evaluate("(id) => setSelection([id])", img["id"])
+    hx, hy = pg.evaluate("(id) => handleAt(items.get(id))", img["id"])
+    pg.mouse.move(hx, hy); pg.mouse.down(); pg.mouse.move(hx + 60, hy + 10, steps=5); pg.mouse.move(hx + 120, hy + 20, steps=5); pg.mouse.up()
+    big = next(i for i in items(pg, "image"))
+    ok(big["w"] > img["w"] + 80 and abs(big["w"] / big["h"] - 4 / 3) < 0.02, "the corner handle resizes a photo and keeps its shape", f'{img["w"]} -> {big["w"]}')
+    up = pg.evaluate("""async () => { const b = await (await fetch('/api/files', { method: 'POST' })).status; return b; }""")
+    mp4ok = pg.evaluate("""(bytes) => fetch('/api/files', { method: 'POST', headers: { 'content-type': 'video/mp4' }, body: new Uint8Array(bytes) }).then((r) => r.status)""", list(open(mp4, "rb").read()))
+    ok(mp4ok == 201 and up == 415, "MP4 videos are accepted; empty uploads are refused")
 
     # the stretch-and-tear opening on a phone
     m = br.new_context(extra_http_headers=RUN_IP, viewport={"width": 390, "height": 844}, device_scale_factor=2, has_touch=True, is_mobile=True, storage_state=ctx.storage_state())
