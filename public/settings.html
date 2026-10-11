@@ -39,6 +39,10 @@
   .choice:has(input:checked) { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
   .mono { font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 13px; overflow-wrap: anywhere; }
   .pref { display: grid; gap: 8px; }
+  .logo-preview { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 13px; background: var(--logo-bg); color: var(--logo-fg); box-shadow: var(--shadow); }
+  .logo-preview .mark { height: 26px; color: inherit; align-self: center; transform: none; }
+  .logo-pick { display: inline-flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; }
+  .logo-pick input { width: 40px; height: 32px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: none; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -134,6 +138,15 @@
         <label><input type="radio" name="toolbar" value="bar"><span>Bar</span></label>
       </div>
       <p class="help sub">Ring is one round button you can drag anywhere; tap it and your tools open in a circle around it. Bar keeps them along the bottom. Very small screens always use the bar.</p>
+    </div>
+    <div class="pref"><h3>Logo colours</h3>
+      <div class="row">
+        <span class="logo-preview" id="logo-preview" aria-hidden="true"></span>
+        <label class="logo-pick">Background <input type="color" id="logo-bg"></label>
+        <label class="logo-pick">Mark <input type="color" id="logo-fg"></label>
+        <button class="btn quiet" id="logo-reset" type="button">Reset</button>
+      </div>
+      <p class="help sub">For the browser tab, the app icon when you install ThinkSL8, and the opening. An app you installed already picks up new colours when your browser next refreshes it, usually within a day; reinstalling it updates it now.</p>
     </div>
     <div class="pref"><h3>Opening animation</h3>
       <div class="seg" role="radiogroup" aria-label="Opening animation">
@@ -348,6 +361,21 @@ bindPref('theme', 'sl8:theme', '', applyTheme);
 bindPref('bg', 'sl8:bg', 'dots');
 bindPref('reveal', 'sl8:revealMode', 'full');
 bindPref('toolbar', 'sl8:toolbar', 'ring');
+
+// logo colours (this device): applied as you pick
+$('#logo-preview').innerHTML = sl8Mark();
+function showLogo() {
+  const c = store.get('sl8:logo') || LOGO;
+  $('#logo-bg').value = c.bg;
+  $('#logo-fg').value = c.fg;
+  $('#logo-reset').hidden = !store.get('sl8:logo');
+  applyLogo();
+}
+for (const id of ['#logo-bg', '#logo-fg']) {
+  $(id).addEventListener('input', () => { store.set('sl8:logo', { bg: $('#logo-bg').value, fg: $('#logo-fg').value }); showLogo(); });
+}
+$('#logo-reset').onclick = () => { store.set('sl8:logo', null); showLogo(); };
+showLogo();
 
 // tear sound (this device): the built-in rip, the user's own audio file, or nothing
 let playTear = tearSoundPlayer();

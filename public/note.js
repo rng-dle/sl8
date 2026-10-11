@@ -1511,14 +1511,15 @@ function reveal() {
   };
   rip(0);
 
-  // t (0..1): tension. The loops follow the fingers; past 45% the page starts to rip; at 1 it tears through.
-  const reach = () => Math.max(120, innerHeight * 0.2); // px of extra finger distance to tear
+  // t (0..1): tension. The loops follow the fingers; the first 62% only stretches the 8, then the page rips; at 1 it tears through.
+  const reach = () => Math.max(174, innerHeight * 0.29); // px of extra finger distance to tear
+  const RIP = 0.62;
   let t = 0, gone = false, frame = 0;
   const timers = [];
   const pull = (v) => {
     t = v;
     stretch8(svg, (v * reach()) / 2 / svg.getScreenCTM().a);
-    rip(Math.max(0, (v - 0.45) / 0.55));
+    rip(Math.max(0, (v - RIP) / (1 - RIP)));
     if (v >= 1) tear();
   };
   const tween = (to, ms, ease) => { // animate the tension (auto play, spring back)

@@ -227,12 +227,12 @@
   #ai-q:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
   .ai-note { margin: 0; font-size: 12px; color: var(--muted); }
 
-  /* the opening: a navy page with the 8 on it, torn in two along a ragged line. Brand colours, whatever the theme */
-  .reveal { position: fixed; inset: 0; z-index: 100; color: #78d1f9; touch-action: none; user-select: none; -webkit-user-select: none; }
+  /* the opening: a page in the logo colours (navy and sky unless changed in Settings) with the 8 on it, torn in two along a ragged line */
+  .reveal { position: fixed; inset: 0; z-index: 100; color: var(--logo-fg, #78d1f9); touch-action: none; user-select: none; -webkit-user-select: none; }
   .reveal.torn { pointer-events: none; }
   .reveal .half, .reveal .rim, .reveal .sheet { position: absolute; inset: 0; }
-  .reveal .sheet { background: radial-gradient(ellipse 70% 60% at 50% 50%, #0f3658, #0a2b48); }
-  .reveal .rim { background: #dcedf8; } /* the pale fibres a tear exposes */
+  .reveal .sheet { background: radial-gradient(ellipse 70% 60% at 50% 50%, color-mix(in srgb, var(--logo-bg, #0a2b48), #fff 4%), var(--logo-bg, #0a2b48)); }
+  .reveal .rim { background: var(--logo-rim, #dcedf8); } /* the pale fibres a tear exposes */
   .reveal.torn .half { transition: transform .75s cubic-bezier(.45,0,.2,1); }
   .reveal.torn .half-t { transform: translateY(-80%) rotate(-4deg); }
   .reveal.torn .half-b { transform: translateY(80%) rotate(3deg); }
@@ -240,14 +240,14 @@
     animation: rv-in .55s cubic-bezier(.2,.8,.2,1) both; }
   .reveal-8, .reveal-8 .loop { transition: color .15s; }
   .reveal-8 { cursor: grab; }
-  .reveal-8 .held, .reveal-8.taut { color: #b6e8fd; } /* a finger is in it */
+  .reveal-8 .held, .reveal-8.taut { color: color-mix(in srgb, var(--logo-fg, #78d1f9) 80%, #fff); } /* a finger is in it */
   .reveal.torn .loop { transition: transform .75s cubic-bezier(.45,0,.2,1); }
   .reveal.torn .strands { opacity: 0; transition: opacity .08s; } /* the stretched band snaps */
   @keyframes rv-in { from { transform: scale(.8); opacity: 0; } }
   .reveal-hint { position: absolute; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 92px); margin: 0 auto; padding: 0 24px; max-width: 30ch;
-    color: #cfe9fb; font-size: 17px; text-align: center; text-wrap: balance; }
+    color: var(--logo-fg, #78d1f9); opacity: .9; font-size: 17px; text-align: center; text-wrap: balance; }
   .reveal-skip { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 28px); transform: translateX(-50%);
-    padding: 8px 20px; border: 1px solid rgb(120 209 249 / .45); border-radius: 999px; background: none; color: #cfe9fb; font-weight: 600; }
+    padding: 8px 20px; border: 1px solid color-mix(in srgb, var(--logo-fg, #78d1f9) 45%, transparent); border-radius: 999px; background: none; color: var(--logo-fg, #78d1f9); font-weight: 600; }
 </style>
 </head>
 <body class="tool-select">

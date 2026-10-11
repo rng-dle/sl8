@@ -168,11 +168,28 @@ with sync_playwright() as p:
     ok(pg.locator(".reveal").count() == 1 and pg.is_visible("text=Drag a loop to stretch it"), "on a computer the opening waits too, and says to drag a loop")
     hx, hy = pg.evaluate("(() => { const m = document.querySelector('.reveal-8').getScreenCTM(); return [m.e, m.f - 80*m.d]; })()")
     pg.mouse.move(hx, hy); pg.mouse.down()
-    for k in range(1, 9): pg.mouse.move(hx, hy - 25 * k)
+    for k in range(1, 15): pg.mouse.move(hx, hy - 25 * k)
     pg.mouse.up()
     pg.wait_for_selector(".reveal", state="detached", timeout=3000)
     ok(True, "dragging a loop with the mouse stretches it until the page tears")
     ok(any(s.startswith("blob:") for s in pg.evaluate("window.__played || []")), "your own sound plays when the page tears")
+
+    # logo colours: Settings recolours the tab icon, the install manifest and app icons, and the opening
+    pg.goto(B + "/settings")
+    pg.evaluate("""for (const [id, v] of [['#logo-bg', '#ffffff'], ['#logo-fg', '#d0021b']]) { const i = document.querySelector(id); i.value = v; i.dispatchEvent(new Event('input')); }""")
+    links = pg.evaluate("[...document.querySelectorAll('link[rel=icon], link[rel=manifest], link[rel=apple-touch-icon]')].map(l => l.getAttribute('href'))")
+    ok(all("bg=ffffff&fg=d0021b" in h for h in links) and pg.evaluate("document.querySelector('meta[name=theme-color]').content") == "#ffffff", "picking logo colours switches the tab icon, app icon and install manifest", str(links))
+    man = json.loads(urllib.request.urlopen(urllib.request.Request(B + "/api/logo/manifest?bg=ffffff&fg=d0021b", headers=RUN_IP)).read())
+    ok(man["theme_color"] == "#ffffff" and man["id"] == "/" and all("bg=ffffff&fg=d0021b" in i["src"] for i in man["icons"]), "the install manifest carries the colours and keeps the same app id")
+    from PIL import Image
+    for name in ("icon-512", "icon-maskable-512"):
+        im = Image.open(io.BytesIO(urllib.request.urlopen(urllib.request.Request(B + f"/api/logo/{name}.png?bg=ffffff&fg=d0021b", headers=RUN_IP)).read())).convert("RGBA")
+        cols = {c for _, c in im.getcolors(1 << 20)}
+        ok((255, 255, 255, 255) in cols and (208, 2, 27, 255) in cols and (10, 43, 72, 255) not in cols, f"{name} is redrawn in the chosen colours")
+    svg = urllib.request.urlopen(urllib.request.Request(B + "/api/logo/favicon.svg?bg=ffffff&fg=d0021b", headers=RUN_IP)).read().decode()
+    ok("#ffffff" in svg and "#d0021b" in svg and "#0a2b48" not in svg, "the tab icon is redrawn in the chosen colours")
+    pg.click("#logo-reset")
+    ok("bg=" not in pg.evaluate("document.querySelector('link[rel=icon]').getAttribute('href')"), "Reset goes back to navy and sky")
 
     # the stretch-and-tear opening on a phone
     m = br.new_context(extra_http_headers=RUN_IP, viewport={"width": 390, "height": 844}, device_scale_factor=2, has_touch=True, is_mobile=True, storage_state=ctx.storage_state())
@@ -196,11 +213,11 @@ with sync_playwright() as p:
     ok(still, "a small stretch springs back")
     mp.wait_for_timeout(700)
     touch("touchStart", [(tx, ty), (bx, by)])
-    for k in range(1, 8): touch("touchMove", [(tx, ty - 10 * k), (bx, by + 10 * k)])
+    for k in range(1, 11): touch("touchMove", [(tx, ty - 10 * k), (bx, by + 10 * k)])
     mp.wait_for_timeout(50)
     ok("torn" not in (mp.get_attribute(".reveal", "class") or ""), "a long stretch rips the page but holds")
     mp.screenshot(path=f"{OUT}/s4b-stretch-phone.png")
-    for k in range(8, 14): touch("touchMove", [(tx, ty - 10 * k), (bx, by + 10 * k)])
+    for k in range(11, 17): touch("touchMove", [(tx, ty - 10 * k), (bx, by + 10 * k)])
     mp.wait_for_timeout(250)
     mp.screenshot(path=f"{OUT}/s4c-tearing-phone.png")
     touch("touchEnd", [])

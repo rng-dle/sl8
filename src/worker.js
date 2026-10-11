@@ -146,9 +146,69 @@ async function deleteFiles(env, userId) {
   } while (cursor);
 }
 
+/* The logo in a user's own colours (Settings > Logo colours): the tab icon, the app icons and the install manifest.
+   The icon PNGs in public/ are indexed: palette entries 0..191 run from the logo background to the mark colour and the
+   rest are background (corners use tRNS), so recolouring only rewrites the palette. Colours are in the URL, so no login. */
+const DEFAULT_LOGO = { bg: '0a2b48', fg: '78d1f9' };
+const LOGO_ICONS = new Set(['icon-192', 'icon-512', 'icon-maskable-512', 'apple-touch-icon']);
+const LOGO_RAMP = 192;
+const SIX_HEX = /^[0-9a-f]{6}$/i;
+const logoColors = (url) => {
+  const bg = url.searchParams.get('bg') || '', fg = url.searchParams.get('fg') || '';
+  return SIX_HEX.test(bg) && SIX_HEX.test(fg) ? { bg: bg.toLowerCase(), fg: fg.toLowerCase() } : DEFAULT_LOGO;
+};
+let crcTable;
+function crc32(bytes) {
+  crcTable ||= Array.from({ length: 256 }, (_, n) => {
+    for (let k = 0; k < 8; k++) n = n & 1 ? 0xedb88320 ^ (n >>> 1) : n >>> 1;
+    return n >>> 0;
+  });
+  let c = 0xffffffff;
+  for (const b of bytes) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+function recolorPng(png, { bg, fg }) {
+  const rgb = (h) => [0, 2, 4].map((i) => parseInt(h.slice(i, i + 2), 16));
+  const [b, f] = [rgb(bg), rgb(fg)];
+  const view = new DataView(png.buffer);
+  for (let p = 8; p + 12 <= png.length; ) {
+    const len = view.getUint32(p), type = String.fromCharCode(...png.subarray(p + 4, p + 8));
+    if (type === 'PLTE') {
+      for (let i = 0; i < len / 3; i++) {
+        const k = i < LOGO_RAMP ? i / (LOGO_RAMP - 1) : 0;
+        for (let ch = 0; ch < 3; ch++) png[p + 8 + i * 3 + ch] = Math.round(b[ch] + (f[ch] - b[ch]) * k);
+      }
+      view.setUint32(p + 8 + len, crc32(png.subarray(p + 4, p + 8 + len)));
+      return png;
+    }
+    p += 12 + len;
+  }
+  return png;
+}
+async function logo(req, env, url, path) {
+  const c = logoColors(url), q = `?bg=${c.bg}&fg=${c.fg}`;
+  const asset = (p) => env.ASSETS.fetch(new URL(p, url.origin));
+  const forever = { 'cache-control': 'public, max-age=31536000, immutable', 'x-content-type-options': 'nosniff' };
+  if (path === '/api/logo/manifest') {
+    const m = await (await asset('/manifest.webmanifest')).json();
+    m.background_color = m.theme_color = '#' + c.bg;
+    m.icons = m.icons.map((i) => ({ ...i, src: i.src.endsWith('.svg') ? '/api/logo/favicon.svg' + q : '/api/logo' + i.src + q }));
+    return new Response(JSON.stringify(m), { headers: { 'content-type': 'application/manifest+json', 'cache-control': 'public, max-age=86400' } });
+  }
+  if (path === '/api/logo/favicon.svg') {
+    const svg = (await (await asset('/favicon.svg')).text()).replace(/#0a2b48/gi, '#' + c.bg).replace(/#78d1f9/gi, '#' + c.fg);
+    return new Response(svg, { headers: { ...forever, 'content-type': 'image/svg+xml', 'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'" } });
+  }
+  const name = path.match(/^\/api\/logo\/([\w-]+)\.png$/)?.[1];
+  if (!LOGO_ICONS.has(name)) return fail(404, 'Not found.');
+  const png = recolorPng(new Uint8Array(await (await asset(`/${name}.png`)).arrayBuffer()), c);
+  return new Response(png, { headers: { ...forever, 'content-type': 'image/png' } });
+}
+
 async function api(req, env, ctx, url) {
   const path = url.pathname;
   const method = req.method;
+  if (path.startsWith('/api/logo/') && method === 'GET') return logo(req, env, url, path);
 
   if (method !== 'GET') {
     const origin = req.headers.get('origin');
