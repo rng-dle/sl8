@@ -2,11 +2,11 @@
 
 Think without boundaries. An infinite canvas for typed, handwritten and drawn thoughts, with the user's own AI connected to what they've written. Live at https://thinksl8.com.
 
-One Cloudflare Worker (`sl8`): static pages in `public/`, API in `src/worker.js`, AI in `src/ai.js`, data in D1 (`sl8-db`). No framework, no build step. Product brief, provider research and the v1 plan: [`docs/PLAN.md`](docs/PLAN.md).
+One Cloudflare Worker (`sl8`): static pages in `public/` (served directly), API in `src/worker.js` (only `/api/*` runs code), AI in `src/ai.js`, email in `src/mail.js`, data in D1 (`sl8-db`). No framework, no build step. Product brief, provider research and the v1 plan: [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Deploy
 
-Pushes to `main` deploy through Cloudflare Workers Builds (Workers & Pages → `sl8` → Settings → Builds, repo `rng-dle/sl8`, deploy command `npx wrangler deploy`). By hand, with Node 18+:
+Pushes to `main` deploy through Cloudflare Workers Builds (Workers & Pages → `sl8` → Settings → Builds, repo `rng-dle/sl8`). Builds don't run database migrations: apply new files in `migrations/` first (they're written to be safe for the code already running). By hand, with Node 18+:
 
 ```
 npm install && npx wrangler login && npx wrangler d1 migrations apply sl8-db --remote && npx wrangler deploy
@@ -14,12 +14,20 @@ npm install && npx wrangler login && npx wrangler d1 migrations apply sl8-db --r
 
 AI connections need one secret, `KEY_ENC_SECRET` (any random string of 32+ characters), which encrypts users' provider keys. Set it in the dashboard (`sl8` → Settings → Variables and Secrets) or with `npx wrangler secret put KEY_ENC_SECRET`. Without it the app works and AI shows as unavailable. Changing it later disconnects everyone's AI, so set it once.
 
+Password reset needs an email sender. Either:
+- **Resend** (free tier): create an account, add `thinksl8.com` as a sending domain (Resend can add the DNS records to Cloudflare for you), then add the API key as the secret `RESEND_API_KEY`.
+- **Cloudflare Email Sending** (public beta, Workers Paid plan): onboard `thinksl8.com` in Email Service and add a `send_email` binding named `EMAIL`.
+
+Mail goes out from `no-reply@thinksl8.com` (override with a `MAIL_FROM` variable). Until one is set up, "Forgot your password?" says reset isn't available yet.
+
+`sl8.nastaliq.co` still serves the app (same data, separate sign-in). To forward it to thinksl8.com, add a Redirect Rule for that hostname in Cloudflare, or remove it from `routes` in `wrangler.toml`.
+
 ## Run and test locally
 
-`.dev.vars` (git-ignored) holds the local secret and points AI calls at a stand-in provider, so nothing real is called:
+`.dev.vars` (git-ignored) holds the local secret and points AI and email at a local stand-in, so nothing real is called:
 
 ```
-printf 'KEY_ENC_SECRET="local-dev-only-secret-0123456789abcdef"\nAI_TEST_BASE="http://127.0.0.1:8788"\n' > .dev.vars
+printf 'KEY_ENC_SECRET="local-dev-only-secret-0123456789abcdef"\nTEST_BASE="http://127.0.0.1:8788"\nRESEND_API_KEY="test-resend-key"\n' > .dev.vars
 npx wrangler d1 migrations apply sl8-db --local
 node test/fake-provider.mjs &
 npx wrangler dev --port 8787 --local-upstream 127.0.0.1:8787
@@ -28,13 +36,14 @@ npx wrangler dev --port 8787 --local-upstream 127.0.0.1:8787
 Then, in another terminal:
 
 ```
-bash test/smoke-test.sh && node test/ai-test.mjs && python3 test/pen-test.py && python3 test/journey.py
+bash test/smoke-test.sh && node test/ai-test.mjs && node test/account-test.mjs && python3 test/pen-test.py && python3 test/journey.py
 ```
 
 - `smoke-test.sh`: accounts, saving, isolation between users, lockout, logout.
 - `ai-test.mjs`: AI connections, encryption at rest, OpenRouter sign-in (PKCE), scopes, retrieval, every error state, the daily cap.
+- `account-test.mjs`: password reset by email, change password, log out everywhere, export, search, account deletion, rate limits, the 404 page.
 - `pen-test.py`: simulated S Pen with a resting palm, and the "Draw with finger" toggle.
-- `journey.py`: the whole journey in a browser, from signup through setup, the reveal, writing, selecting, asking AI and reloading, to settings and a phone layout.
+- `journey.py`: the whole journey in a browser, from signup through setup, the reveal, writing, selecting, asking AI and reloading, to settings, search, password reset and a phone layout.
 
 The Python tests need `pip install playwright && playwright install chromium`.
 
@@ -52,10 +61,14 @@ The Python tests need `pip install playwright && playwright install chromium`.
 - **Desktop:** the wheel pans, Ctrl + wheel or a trackpad pinch zooms, and holding Space lets you drag. Ctrl+Z and Ctrl+Shift+Z undo and redo.
 - **Appearance:** theme and canvas background in the ⋯ menu or Settings. The opening animation can be set to Full, Short or Off.
 - **Saving:** changes save every second. Offline edits stay on the device and are sent when the connection returns.
+- **Search:** on the Canvases page, across everything typed and every canvas title. Results open the canvas at that note.
+- **Account (Settings):** change password, download all your data as JSON, log out on all devices, delete the account.
+- **Install:** the site has an app icon and manifest, so "Add to Home screen" on a phone opens it like an app.
+- **Limits against abuse:** 10 sign-ups an hour and 30 sign-in attempts per 10 minutes from one network, account lockout after 10 wrong passwords, and up to 3 reset emails an hour per address.
 
 ## Not built yet
 
-- Password reset and email verification (needs an email provider such as Resend).
-- Signup spam protection (Cloudflare Turnstile).
+- Email verification on sign-up.
+- Bot protection on sign-up beyond the rate limits (Cloudflare Turnstile).
 - Sign in with ChatGPT: OpenAI requires approval for hosted apps (interest form linked in `docs/PLAN.md`).
 - Handwriting recognition, semantic search, connections between notes, and sharing.

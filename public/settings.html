@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Settings · ThinkSL8</title>
 <script>try{var t=JSON.parse(localStorage.getItem('sl8:theme'));if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#2a44c4">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
@@ -136,8 +140,42 @@
   <section aria-labelledby="acct-h">
     <h2 id="acct-h">Account</h2>
     <p class="lede">Signed in as <b id="email"></b></p>
-    <div class="row"><button class="btn" id="logout" type="button">Log out</button></div>
+
+    <details>
+      <summary>Change password</summary>
+      <form id="pw-form" class="grid" novalidate>
+        <div class="field"><label for="pw-current">Current password</label><input id="pw-current" type="password" autocomplete="current-password" required></div>
+        <div class="field"><label for="pw-new">New password</label><input id="pw-new" type="password" autocomplete="new-password" minlength="8" required><p class="help">Use 8 or more characters. Other devices will be signed out.</p></div>
+        <p class="notice error" id="pw-error" role="alert" hidden></p>
+        <div><button class="btn primary" id="pw-btn" type="submit">Change password</button></div>
+      </form>
+    </details>
+
+    <div class="pref">
+      <h3>Your data</h3>
+      <p class="help sub" style="margin:0">Download everything you've written as one file: every canvas with its text, ink and positions.</p>
+      <div><a class="btn" href="/api/export" download>Download my data</a></div>
+    </div>
+
+    <div class="pref">
+      <h3>Devices</h3>
+      <div class="row">
+        <button class="btn" id="logout" type="button">Log out</button>
+        <button class="btn" id="logout-all" type="button">Log out on all devices</button>
+      </div>
+    </div>
+
+    <details>
+      <summary style="color:var(--danger)">Delete account</summary>
+      <form id="del-form" class="grid" novalidate>
+        <p class="notice warn">This permanently deletes your account, every canvas and note, and your AI connection. It can't be undone. Download your data first if you want a copy.</p>
+        <div class="field"><label for="del-pw">Your password</label><input id="del-pw" type="password" autocomplete="current-password" required></div>
+        <p class="notice error" id="del-error" role="alert" hidden></p>
+        <div><button class="btn danger" id="del-btn" type="submit">Delete my account</button></div>
+      </form>
+    </details>
   </section>
+  <p class="help sub" style="padding-top:20px;font-size:13px"><a href="/privacy">Privacy Policy</a> · <a href="/terms">Terms</a></p>
 </main>
 <div id="toast" class="toast" role="alert" hidden></div>
 <script src="/common.js"></script>
@@ -291,6 +329,52 @@ $('#logout').onclick = async () => {
   try { await api('/api/logout', { method: 'POST' }); } catch {}
   location.replace('/');
 };
+$('#logout-all').onclick = async () => {
+  try {
+    await api('/api/logout-all', { method: 'POST' });
+    location.replace('/');
+  } catch (e) { toast(e.message); }
+};
+
+$('#pw-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = $('#pw-btn');
+  btn.disabled = true;
+  $('#pw-error').hidden = true;
+  try {
+    await api('/api/password/change', { method: 'POST', body: { current: $('#pw-current').value, password: $('#pw-new').value } });
+    $('#pw-form').reset();
+    $('#pw-form').closest('details').open = false;
+    toast('Password changed. Other devices have been signed out.');
+  } catch (err) {
+    $('#pw-error').textContent = err.message;
+    $('#pw-error').hidden = false;
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$('#del-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = $('#del-btn');
+  if (!btn.dataset.armed) {
+    btn.dataset.armed = '1';
+    btn.textContent = 'Yes, delete everything permanently';
+    setTimeout(() => { delete btn.dataset.armed; btn.textContent = 'Delete my account'; }, 6000);
+    return;
+  }
+  btn.disabled = true;
+  $('#del-error').hidden = true;
+  try {
+    await api('/api/account/delete', { method: 'POST', body: { password: $('#del-pw').value } });
+    try { localStorage.clear(); } catch {}
+    location.replace('/?deleted=1');
+  } catch (err) {
+    $('#del-error').textContent = err.message;
+    $('#del-error').hidden = false;
+    btn.disabled = false;
+  }
+});
 
 api('/api/me').then((me) => {
   $('#email').textContent = me.email;

@@ -5,6 +5,10 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Canvases · ThinkSL8</title>
 <script>try{var t=JSON.parse(localStorage.getItem('sl8:theme'));if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#2a44c4">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
@@ -23,6 +27,13 @@
   .del.confirm { width: auto; padding: 0 12px; background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); font-size: 14px; font-weight: 600; }
   .empty { padding: 48px 0; color: var(--muted); max-width: 44ch; }
   .empty b { display: block; font: 400 24px/1.2 var(--font-display); color: var(--text); margin-bottom: 6px; }
+  .search { position: relative; margin: 4px 0 8px; }
+  .search svg { position: absolute; left: 14px; top: 50%; width: 20px; height: 20px; transform: translateY(-50%); fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; }
+  .search input { width: 100%; min-height: 48px; padding: 0 14px 0 44px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+  .search input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  #found-count { margin: 12px 4px 0; }
+  .results .s { font-size: 15px; color: var(--text); overflow-wrap: anywhere; }
+  .results mark { background: color-mix(in srgb, var(--ink-yellow) 45%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
 </style>
 </head>
 <body>
@@ -34,6 +45,14 @@
   <div class="head">
     <h1>Canvases<small id="count"></small></h1>
     <button class="btn primary" id="new" type="button">New canvas</button>
+  </div>
+  <form class="search" role="search" onsubmit="return false">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="q" type="search" placeholder="Search everything you've typed" aria-label="Search your notes" autocomplete="off">
+  </form>
+  <div id="found" hidden>
+    <p class="d" id="found-count"></p>
+    <ul class="notes results" id="results"></ul>
   </div>
   <p class="empty" id="loading">Loading…</p>
   <ul class="notes" id="notes"></ul>
@@ -102,6 +121,54 @@ $('#new').onclick = async () => {
     $('#new').disabled = false;
   }
 };
+
+// search: snippets arrive with \u0001 / \u0002 around matches, turned into <mark> as text nodes
+function snippetNodes(s) {
+  return s.split(/(\u0001[^\u0002]*\u0002)/).map((part) => {
+    if (!part.startsWith('\u0001')) return document.createTextNode(part);
+    const m = document.createElement('mark');
+    m.textContent = part.slice(1, -1);
+    return m;
+  });
+}
+function resultItem(href, title, sub, snippet) {
+  const li = document.createElement('li');
+  const a = document.createElement('a');
+  a.href = href;
+  if (snippet) { const s = document.createElement('span'); s.className = 's'; s.append(...snippetNodes(snippet)); a.append(s); }
+  const t = document.createElement('span'); t.className = snippet ? 'd' : 't'; t.textContent = title;
+  const d = document.createElement('span'); d.className = 'd'; d.textContent = sub;
+  a.append(t);
+  if (sub) a.append(d);
+  li.append(a);
+  return li;
+}
+let searchTimer, searchSeq = 0;
+$('#q').addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(search, 220);
+});
+async function search() {
+  const q = $('#q').value.trim();
+  const listing = !q;
+  $('#notes').hidden = !listing;
+  $('#empty').hidden = !listing || current.length > 0;
+  $('#found').hidden = listing;
+  if (listing) return;
+  const seq = ++searchSeq;
+  try {
+    const { results, canvases } = await api('/api/search?q=' + encodeURIComponent(q));
+    if (seq !== searchSeq) return; // a newer search is on its way
+    const n = results.length + canvases.length;
+    $('#found-count').textContent = n ? `${n} result${n === 1 ? '' : 's'}` : 'Nothing found. Search looks at typed text and canvas titles, not handwriting.';
+    $('#results').replaceChildren(
+      ...canvases.map((c) => resultItem('/note?id=' + encodeURIComponent(c.id), c.title, 'Canvas · edited ' + ago(c.updated_at))),
+      ...results.map((r) => resultItem(`/note?id=${encodeURIComponent(r.noteId)}#item-${r.id}`, `In “${r.title}” · ${ago(r.updated)}`, '', r.snippet)),
+    );
+  } catch (err) {
+    toast(err.message);
+  }
+}
 
 addEventListener('pageshow', (e) => e.persisted && load());
 async function load() {

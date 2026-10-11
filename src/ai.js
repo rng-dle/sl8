@@ -45,8 +45,8 @@ async function unseal(key, userId, sealed) {
 class ProviderError extends Error {
   constructor(kind, message) { super(message); this.kind = kind; }
 }
-// AI_TEST_BASE points every provider at a local stand-in during tests; production never sets it
-const baseOf = (env, p) => (env.AI_TEST_BASE ? `${env.AI_TEST_BASE}/${p}` : PROVIDERS[p].base);
+// TEST_BASE points every provider at a local stand-in during tests; production never sets it
+const baseOf = (env, p) => (env.TEST_BASE ? `${env.TEST_BASE}/${p}` : PROVIDERS[p].base);
 
 function headersFor(p, key) {
   if (PROVIDERS[p].style === 'anthropic') return { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' };
@@ -278,7 +278,7 @@ export async function aiRoutes(req, env, ctx, url, user, body) {
     const verifier = b64url(crypto.getRandomValues(new Uint8Array(32)));
     const challenge = b64url(await crypto.subtle.digest('SHA-256', enc.encode(verifier)));
     const ret = safeReturn(url.searchParams.get('return'));
-    const auth = env.AI_TEST_BASE ? `${env.AI_TEST_BASE}/openrouter-auth` : 'https://openrouter.ai/auth';
+    const auth = env.TEST_BASE ? `${env.TEST_BASE}/openrouter-auth` : 'https://openrouter.ai/auth';
     const to = `${auth}?callback_url=${encodeURIComponent(url.origin + '/api/ai/openrouter/callback')}&code_challenge=${challenge}&code_challenge_method=S256`;
     return redirect(to, { 'set-cookie': pkceCookie(`${verifier}|${encodeURIComponent(ret)}`, 900) });
   }

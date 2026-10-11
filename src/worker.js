@@ -1,7 +1,8 @@
 // ThinkSL8 API: email/password accounts, per-user canvases (stored as "notes"), each a set of items, plus AI (src/ai.js).
 import { aiRoutes } from './ai.js';
+import { canSendMail, sendMail, resetEmail } from './mail.js';
 
-const OLD_HOSTS = new Set(['sl8.nastaliq.co', 'www.thinksl8.com']);
+const OLD_HOSTS = new Set(['sl8.nastaliq.co']); // still served; reset links from it point at thinksl8.com
 const SESSION_DAYS = 30;
 // [x, y, width, font size, colour, text] for the optional sample canvas created during setup
 const SAMPLE = [
@@ -60,12 +61,44 @@ async function currentUser(req, env) {
   ).bind(await sha256(token), Date.now()).first();
 }
 
+const cleanEmail = (v) => (typeof v === 'string' ? v.trim().toLowerCase() : '');
+const okEmail = (e) => EMAIL.test(e) && e.length <= 254;
+const okPassword = (p) => typeof p === 'string' && p.length >= 8 && p.length <= 200;
+const PW_RULE = 'Password must be at least 8 characters.';
+
 function credentials(body) {
-  const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : '';
+  const email = cleanEmail(body.email);
   const password = typeof body.password === 'string' ? body.password : '';
-  if (!EMAIL.test(email) || email.length > 254) return { error: 'Enter a valid email address.' };
-  if (password.length < 8 || password.length > 200) return { error: 'Password must be at least 8 characters.' };
+  if (!okEmail(email)) return { error: 'Enter a valid email address.' };
+  if (!okPassword(password)) return { error: PW_RULE };
   return { email, password };
+}
+
+async function passwordMatches(u, password) {
+  if (!u || typeof password !== 'string') return false;
+  return crypto.subtle.timingSafeEqual(enc.encode(await hashPw(password, u.pw_salt)), enc.encode(u.pw_hash));
+}
+async function newPasswordFields(password) {
+  const salt = hex(crypto.getRandomValues(new Uint8Array(16)));
+  return [await hashPw(password, salt), salt];
+}
+
+// Counts requests per key in a fixed window; true once the limit is passed.
+async function throttled(env, key, limit, windowSec) {
+  const now = Math.floor(Date.now() / 1000);
+  const bucket = now - (now % windowSec);
+  const n = await env.DB.prepare(
+    'INSERT INTO throttle (key, bucket, n) VALUES (?, ?, 1) ON CONFLICT (key, bucket) DO UPDATE SET n = n + 1 RETURNING n'
+  ).bind(key, bucket).first('n');
+  if (Math.random() < 0.02) await env.DB.prepare('DELETE FROM throttle WHERE bucket < ?').bind(now - 86400).run();
+  return n > limit;
+}
+const clientIp = (req) => req.headers.get('cf-connecting-ip') || 'local';
+
+// FTS5 query from what someone typed: every word must appear, matching word starts.
+function searchQuery(q) {
+  const words = (String(q).toLowerCase().match(/[\p{L}\p{N}]+/gu) || []).slice(0, 8);
+  return words.map((w) => `"${w}"*`).join(' ');
 }
 
 function validItem(it) {
@@ -87,11 +120,12 @@ async function api(req, env, ctx, url) {
   if (path === '/api/signup' && method === 'POST') {
     const c = credentials(body);
     if (c.error) return fail(400, c.error);
+    if (await throttled(env, 'signup:' + clientIp(req), 10, 3600)) return fail(429, 'Too many new accounts from this network. Try again in an hour.');
     const id = crypto.randomUUID();
-    const salt = hex(crypto.getRandomValues(new Uint8Array(16)));
+    const [hash, salt] = await newPasswordFields(c.password);
     try {
       await env.DB.prepare('INSERT INTO users (id, email, pw_hash, pw_salt, created_at) VALUES (?, ?, ?, ?, ?)')
-        .bind(id, c.email, await hashPw(c.password, salt), salt, Date.now()).run();
+        .bind(id, c.email, hash, salt, Date.now()).run();
     } catch (e) {
       if (String(e.message).includes('UNIQUE')) return fail(409, 'That email already has an account. Log in instead.');
       throw e;
@@ -102,10 +136,11 @@ async function api(req, env, ctx, url) {
   if (path === '/api/login' && method === 'POST') {
     const c = credentials(body);
     if (c.error) return fail(400, 'Wrong email or password.');
+    if (await throttled(env, 'login:' + clientIp(req), 30, 600)) return fail(429, 'Too many sign-in attempts from this network. Try again in 10 minutes.');
     const u = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(c.email).first();
     const now = Date.now();
-    if (u && u.locked_until > now) return fail(429, 'Too many wrong attempts. Try again in 15 minutes.');
-    const ok = u && crypto.subtle.timingSafeEqual(enc.encode(await hashPw(c.password, u.pw_salt)), enc.encode(u.pw_hash));
+    if (u && u.locked_until > now) return fail(429, 'Too many wrong attempts. Try again in 15 minutes, or reset your password.');
+    const ok = await passwordMatches(u, c.password);
     if (!ok) {
       if (u) {
         const fails = u.fails + 1;
@@ -124,8 +159,108 @@ async function api(req, env, ctx, url) {
     return json({ ok: true }, 200, { 'set-cookie': cookie('', 0) });
   }
 
+  if (path === '/api/password/forgot' && method === 'POST') {
+    if (!canSendMail(env)) return fail(503, "Password reset by email isn't set up yet.");
+    const email = cleanEmail(body.email);
+    if (!okEmail(email)) return fail(400, 'Enter a valid email address.');
+    if (await throttled(env, 'forgot:' + clientIp(req), 5, 600)) return fail(429, 'Too many reset requests from this network. Try again in 10 minutes.');
+    const sent = json({ ok: true }); // identical reply whether or not the account exists
+    if (await throttled(env, 'forgot:' + email, 3, 3600)) return sent;
+    const u = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
+    if (!u) return sent;
+    const token = hex(crypto.getRandomValues(new Uint8Array(32)));
+    const now = Date.now();
+    await env.DB.batch([
+      env.DB.prepare('DELETE FROM resets WHERE expires_at < ?').bind(now),
+      env.DB.prepare('INSERT INTO resets VALUES (?, ?, ?)').bind(await sha256(token), u.id, now + 3600e3),
+    ]);
+    const origin = OLD_HOSTS.has(url.hostname) ? 'https://thinksl8.com' : url.origin;
+    ctx.waitUntil(sendMail(env, { to: email, ...resetEmail(`${origin}/reset?token=${token}`) }).catch((e) => console.error('reset email failed', e)));
+    return sent;
+  }
+
+  if (path === '/api/password/reset' && method === 'POST') {
+    const token = typeof body.token === 'string' && /^[a-f0-9]{64}$/.test(body.token) ? body.token : '';
+    if (!okPassword(body.password)) return fail(400, PW_RULE);
+    const row = token && await env.DB.prepare(
+      'SELECT u.id, u.email FROM resets r JOIN users u ON u.id = r.user_id WHERE r.token_hash = ? AND r.expires_at > ?'
+    ).bind(await sha256(token), Date.now()).first();
+    if (!row) return fail(400, 'This reset link has expired or was already used. Ask for a new one.');
+    const [hash, salt] = await newPasswordFields(body.password);
+    await env.DB.batch([
+      env.DB.prepare('UPDATE users SET pw_hash = ?, pw_salt = ?, fails = 0, locked_until = 0 WHERE id = ?').bind(hash, salt, row.id),
+      env.DB.prepare('DELETE FROM resets WHERE user_id = ?').bind(row.id),
+      env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(row.id), // sign out everywhere, then sign in here
+    ]);
+    return startSession(env, row.id, row.email);
+  }
+
   const user = await currentUser(req, env);
   if (!user) return fail(401, 'Log in to continue.');
+
+  if (path === '/api/password/change' && method === 'POST') {
+    if (!okPassword(body.password)) return fail(400, PW_RULE);
+    if (await throttled(env, 'pwchange:' + user.id, 10, 600)) return fail(429, 'Too many attempts. Try again in 10 minutes.');
+    const u = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first();
+    if (!(await passwordMatches(u, body.current))) return fail(400, 'Your current password is wrong.');
+    const [hash, salt] = await newPasswordFields(body.password);
+    await env.DB.batch([
+      env.DB.prepare('UPDATE users SET pw_hash = ?, pw_salt = ? WHERE id = ?').bind(hash, salt, user.id),
+      env.DB.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash != ?').bind(user.id, await sha256(sessionToken(req))),
+    ]);
+    return json({ ok: true });
+  }
+
+  if (path === '/api/logout-all' && method === 'POST') {
+    await env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(user.id).run();
+    return json({ ok: true }, 200, { 'set-cookie': cookie('', 0) });
+  }
+
+  if (path === '/api/account/delete' && method === 'POST') {
+    if (await throttled(env, 'delete:' + user.id, 10, 600)) return fail(429, 'Too many attempts. Try again in 10 minutes.');
+    const u = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first();
+    if (!(await passwordMatches(u, body.password))) return fail(400, 'That password is wrong, so nothing was deleted.');
+    const mine = 'SELECT id FROM notes WHERE user_id = ?';
+    await env.DB.batch([
+      env.DB.prepare(`DELETE FROM items WHERE note_id IN (${mine})`).bind(user.id),
+      ...['notes', 'ai_connections', 'ai_usage', 'resets', 'sessions'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(user.id)),
+      env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id),
+    ]);
+    return json({ ok: true }, 200, { 'set-cookie': cookie('', 0) });
+  }
+
+  if (path === '/api/export' && method === 'GET') {
+    const [{ results: notes }, { results: rows }, acct] = await Promise.all([
+      env.DB.prepare('SELECT id, title, created_at, updated_at FROM notes WHERE user_id = ? ORDER BY created_at').bind(user.id).all(),
+      env.DB.prepare('SELECT note_id, data FROM items WHERE note_id IN (SELECT id FROM notes WHERE user_id = ?) ORDER BY t').bind(user.id).all(),
+      env.DB.prepare('SELECT created_at FROM users WHERE id = ?').bind(user.id).first(),
+    ]);
+    const byNote = Object.fromEntries(notes.map((n) => [n.id, { ...n, items: [] }]));
+    for (const r of rows) byNote[r.note_id]?.items.push(JSON.parse(r.data));
+    const day = new Date().toISOString().slice(0, 10);
+    return new Response(JSON.stringify({
+      format: 'thinksl8-export-1', exported_at: new Date().toISOString(),
+      account: { email: user.email, created_at: acct?.created_at }, canvases: Object.values(byNote),
+    }, null, 1), {
+      headers: { 'content-type': 'application/json', 'cache-control': 'no-store', 'content-disposition': `attachment; filename="thinksl8-${day}.json"` },
+    });
+  }
+
+  if (path === '/api/search' && method === 'GET') {
+    const q = (url.searchParams.get('q') || '').slice(0, 200);
+    const m = searchQuery(q);
+    if (!m) return json({ results: [], canvases: [] });
+    const [{ results }, { results: canvases }] = await Promise.all([
+      env.DB.prepare(
+        `SELECT i.id, i.note_id AS noteId, n.title, i.updated_at AS updated, snippet(items_fts, 0, char(1), char(2), '…', 14) AS snippet
+         FROM items_fts JOIN items i ON i.rowid = items_fts.rowid JOIN notes n ON n.id = i.note_id
+         WHERE items_fts MATCH ? AND n.user_id = ? ORDER BY bm25(items_fts) LIMIT 30`
+      ).bind(m, user.id).all(),
+      env.DB.prepare("SELECT id, title, updated_at FROM notes WHERE user_id = ? AND title LIKE ? ESCAPE '\\' ORDER BY updated_at DESC LIMIT 10")
+        .bind(user.id, '%' + q.trim().replace(/[\\%_]/g, (c) => '\\' + c) + '%').all(),
+    ]);
+    return json({ results, canvases });
+  }
 
   if (path === '/api/me' && method === 'GET') {
     const last = await env.DB.prepare('SELECT id FROM notes WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1').bind(user.id).first('id');
@@ -217,11 +352,7 @@ async function api(req, env, ctx, url) {
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
-    if (!url.pathname.startsWith('/api/')) {
-      // thinksl8.com is the home; the old address forwards page visits (the API keeps answering for tabs still open there)
-      if (OLD_HOSTS.has(url.hostname)) return Response.redirect('https://thinksl8.com' + url.pathname + url.search, 301);
-      return env.ASSETS.fetch(req);
-    }
+    if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(req);
     try {
       return await api(req, env, ctx, url);
     } catch (e) {

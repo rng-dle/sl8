@@ -6,6 +6,10 @@
 <title>ThinkSL8</title>
 <meta name="description" content="Think without boundaries. An endless canvas for your thoughts, with the AI you choose.">
 <script>try{var t=JSON.parse(localStorage.getItem('sl8:theme'));if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#2a44c4">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
@@ -39,6 +43,10 @@
   form { display: grid; gap: 14px; }
   .hint { margin: -6px 0 0; font-size: 13px; color: var(--muted); }
   #entering { display: grid; place-items: center; min-height: 80dvh; color: var(--muted); }
+  .small-link { justify-self: center; font-size: 14px; }
+  .consent { margin: 0; font-size: 13px; color: var(--muted); text-align: center; }
+  .foot { display: flex; gap: 16px; justify-content: center; padding-top: 24px; font-size: 13px; }
+  .foot a { color: var(--muted); }
 </style>
 </head>
 <body>
@@ -67,9 +75,12 @@
         <p class="hint" id="pw-hint" hidden>Use 8 or more characters.</p>
         <p class="notice error" id="error" role="alert" hidden></p>
         <button class="btn primary" id="submit" type="submit">Log in</button>
+        <a class="small-link" id="forgot" href="/reset">Forgot your password?</a>
+        <p class="consent" id="consent" hidden>By creating an account you agree to the <a href="/terms">Terms</a> and <a href="/privacy">Privacy Policy</a>.</p>
       </form>
     </div>
   </section>
+  <nav class="foot" id="foot" hidden><a href="/privacy">Privacy</a><a href="/terms">Terms</a></nav>
 </div>
 <div id="toast" class="toast" role="alert" hidden></div>
 <script src="/common.js"></script>
@@ -88,6 +99,8 @@ function setMode(m) {
   $('#submit').textContent = m === 'login' ? 'Log in' : 'Create account';
   $('#password').autocomplete = m === 'login' ? 'current-password' : 'new-password';
   $('#pw-hint').hidden = m === 'login';
+  $('#forgot').hidden = m !== 'login';
+  $('#consent').hidden = m === 'login';
   $('#error').hidden = true;
 }
 $('#tab-login').onclick = () => setMode('login');
@@ -123,6 +136,8 @@ $('#form').addEventListener('submit', async (e) => {
 enter().catch((err) => {
   $('#entering').hidden = true;
   $('#auth').hidden = false;
+  $('#foot').hidden = false;
+  if (new URLSearchParams(location.search).has('deleted')) toast('Your account and everything in it has been deleted.');
   if (err.status !== 401) toast(err.message);
 });
 </script>

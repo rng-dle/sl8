@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Reset password · ThinkSL8</title>
+<meta name="referrer" content="no-referrer">
+<script>try{var t=JSON.parse(localStorage.getItem('sl8:theme'));if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#2a44c4">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/style.css">
+<style>
+  main { max-width: 440px; margin: 0 auto; min-height: 100dvh; display: grid; align-content: center; gap: 20px;
+    padding-inline: 16px; padding-block: calc(env(safe-area-inset-top, 0px) + 32px) calc(env(safe-area-inset-bottom, 0px) + 32px); }
+  h1 { margin: 0; font: 400 34px/1.1 var(--font-display); }
+  .lede { margin: 0; color: var(--muted); }
+  form { display: grid; gap: 14px; }
+  .back { font-size: 15px; }
+</style>
+</head>
+<body>
+<main>
+  <a class="wordmark" href="/">Think<b>SL8</b></a>
+
+  <section id="ask" hidden style="display:grid;gap:20px">
+    <h1>Reset your password</h1>
+    <p class="lede">Enter the email you signed up with. We'll send a link to choose a new password.</p>
+    <form id="ask-form" novalidate>
+      <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="email" inputmode="email" required></div>
+      <p class="notice error" id="ask-error" role="alert" hidden></p>
+      <button class="btn primary" type="submit" id="ask-btn">Send reset link</button>
+    </form>
+  </section>
+
+  <section id="asked" hidden style="display:grid;gap:16px">
+    <h1>Check your email</h1>
+    <p class="lede">If there's a ThinkSL8 account for <b id="asked-email"></b>, a reset link is on its way. It works once and expires in an hour. Check spam if it doesn't arrive in a few minutes.</p>
+  </section>
+
+  <section id="set" hidden style="display:grid;gap:20px">
+    <h1>Choose a new password</h1>
+    <p class="lede">You'll be signed out on every other device.</p>
+    <form id="set-form" novalidate>
+      <div class="field"><label for="password">New password</label><input id="password" type="password" autocomplete="new-password" minlength="8" required></div>
+      <p class="help sub" style="margin:-6px 0 0;font-size:13px;color:var(--muted)">Use 8 or more characters.</p>
+      <p class="notice error" id="set-error" role="alert" hidden></p>
+      <button class="btn primary" type="submit" id="set-btn">Save password and sign in</button>
+    </form>
+  </section>
+
+  <a class="back" href="/">Back to sign in</a>
+</main>
+<div id="toast" class="toast" role="alert" hidden></div>
+<script src="/common.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+const token = new URLSearchParams(location.search).get('token');
+if (token) history.replaceState(null, '', '/reset'); // keep the token out of history and screenshots
+$(token ? '#set' : '#ask').hidden = false;
+
+function busy(btn, on, label) { btn.disabled = on; if (label) btn.textContent = label; }
+
+$('#ask-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = $('#ask-btn');
+  busy(btn, true, 'Sending…');
+  $('#ask-error').hidden = true;
+  try {
+    await api('/api/password/forgot', { method: 'POST', body: { email: $('#email').value } });
+    $('#asked-email').textContent = $('#email').value.trim();
+    $('#ask').hidden = true;
+    $('#asked').hidden = false;
+  } catch (err) {
+    $('#ask-error').textContent = err.message;
+    $('#ask-error').hidden = false;
+  } finally {
+    busy(btn, false, 'Send reset link');
+  }
+});
+
+$('#set-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = $('#set-btn');
+  busy(btn, true, 'Saving…');
+  $('#set-error').hidden = true;
+  try {
+    await api('/api/password/reset', { method: 'POST', body: { token, password: $('#password').value } });
+    location.replace('/');
+  } catch (err) {
+    $('#set-error').replaceChildren(err.message);
+    if (/expired|used/.test(err.message)) {
+      const a = document.createElement('a');
+      a.href = '/reset';
+      a.textContent = ' Send a new link';
+      $('#set-error').append(a);
+    }
+    $('#set-error').hidden = false;
+    busy(btn, false, 'Save password and sign in');
+  }
+});
+</script>
+</body>
+</html>
