@@ -25,12 +25,16 @@ banner_css = '''
     background: var(--surface); box-shadow: var(--shadow); font-size: 13px; color: var(--muted); white-space: nowrap; }
   .pv b { color: var(--text); display: inline-flex; align-items: baseline; gap: 2px; font: 400 15px/1 var(--font-display); }
   .pv button { height: 28px; padding: 0 10px; border: 0; border-radius: 999px; background: var(--accent-soft); color: var(--text); font-size: 13px; font-weight: 600; }
-  @media (max-width: 480px) { .pv .pv-note { display: none; } }
+  .pv input[type=color] { width: 28px; height: 26px; padding: 0; border: 0; background: none; }
+  @media (max-width: 480px) { .pv .pv-note, .pv b { display: none; } .pv { padding-left: 4px; } }
 '''
 banner = '''<div class="pv" role="note"><b>Think<span data-mark></span></b><span class="pv-note">Preview · saved only in this browser</span>
   <button type="button" onclick="sessionStorage.setItem('sl8:reveal','1'); store.set('sl8:revealMode','full'); reveal()">Replay</button>
-  <button type="button" onclick="document.getElementById('pv-sound').click()">Tear sound</button>
+  <button type="button" onclick="tour()">Tour</button>
+  <button type="button" onclick="document.getElementById('pv-sound').click()">Sound</button>
   <input id="pv-sound" type="file" accept="audio/*,.mp3,.m4a,.wav,.ogg" hidden onchange="previewSound(this)">
+  <button type="button" onclick="document.getElementById('pv-logo').hidden ^= 1">Logo</button>
+  <span id="pv-logo" hidden><input type="color" id="pv-bg" value="#0a2b48" oninput="previewLogo()" aria-label="Logo background"><input type="color" id="pv-fg" value="#78d1f9" oninput="previewLogo()" aria-label="Logo mark"></span>
   <button type="button" onclick="previewReset()">Reset</button></div>
 '''
 html = (

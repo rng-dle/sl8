@@ -38,6 +38,25 @@ function applyTheme(t) {
   else delete document.documentElement.dataset.theme;
 }
 
+// Logo colours (Settings, this device): the tab icon, the icon when ThinkSL8 is installed, and the opening.
+const LOGO = { bg: '#0a2b48', fg: '#78d1f9' };
+function applyLogo(c = store.get('sl8:logo')) {
+  const custom = /^#[0-9a-f]{6}$/i.test(c?.bg) && /^#[0-9a-f]{6}$/i.test(c?.fg);
+  const { bg, fg } = custom ? c : LOGO, q = `?bg=${bg.slice(1)}&fg=${fg.slice(1)}`;
+  const link = (rel, plain, colored) => { const l = document.querySelector(`link[rel="${rel}"]`); if (l) l.href = custom ? colored + q : plain; };
+  link('icon', '/favicon.svg', '/api/logo/favicon.svg');
+  link('apple-touch-icon', '/apple-touch-icon.png', '/api/logo/apple-touch-icon.png');
+  link('manifest', '/manifest.webmanifest', '/api/logo/manifest');
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', bg);
+  document.documentElement.style.setProperty('--logo-bg', bg);
+  document.documentElement.style.setProperty('--logo-fg', fg);
+  // a tear shows pale fibres on dark paper and a shadowed edge on light paper
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(bg.slice(i, i + 2), 16));
+  const light = 0.2126 * r + 0.7152 * g + 0.0722 * b > 150;
+  document.documentElement.style.setProperty('--logo-rim', `color-mix(in srgb, ${bg} ${light ? '78%, #000' : '12%, #fff'})`);
+}
+applyLogo();
+
 // The SL8 mark: an S of two half discs, an upright bar, and an 8 of two rings where one strand
 // passes over the other (the two curved cuts in the mask). Drawn in currentColor.
 let markSeq = 0;

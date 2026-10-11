@@ -135,6 +135,41 @@
   .custom-color { position: relative; flex: none; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; cursor: pointer; }
   .custom-color span { width: 22px; height: 22px; border-radius: 50%; background: conic-gradient(red, yellow, lime, cyan, blue, magenta, red); box-shadow: inset 0 0 0 2px var(--surface); }
   .custom-color input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; height: 100%; padding: 0; border: 0; }
+
+  /* ring: one floating button; the same tools fan out in circles around it (positions set by layoutRing in note.js) */
+  .fab { display: none; }
+  .dock.ring { left: var(--fx); top: var(--fy); right: auto; bottom: auto; width: 0; height: 0; padding: 0; display: block; transition: left .22s, top .22s; }
+  .dock.ring.open { z-index: 25; }
+  .dock.ring.dragging, .dock.ring.still, .dock.ring.still .ring-item { transition: none; }
+  .dock.ring .bar:not([hidden]), .dock.ring .options .group { display: contents; }
+  .dock.ring .sep { display: none; }
+  .dock.ring .fab { display: grid; place-items: center; position: absolute; left: 0; top: 0; translate: -50% -50%; width: 58px; height: 58px; padding: 0;
+    border: 3px solid var(--fab-c, var(--accent)); border-radius: 50%; background: var(--surface); color: var(--text); box-shadow: var(--shadow);
+    pointer-events: auto; touch-action: none; cursor: pointer; transition: scale .15s; }
+  .dock.ring .fab svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .dock.ring.open .fab { scale: .86; }
+  .dock.ring .ring-item { position: absolute; left: 0; top: 0; translate: -50% -50%; transform: translate(var(--x, 0), var(--y, 0)) scale(var(--s, .4));
+    opacity: 0; pointer-events: none; transition: transform .24s cubic-bezier(.2,.9,.25,1.15) var(--d, 0s), opacity .16s var(--d, 0s); }
+  .dock.ring.open .ring-item { --s: 1; opacity: 1; pointer-events: auto; }
+  .dock.ring .ring-item:is(button, label) { border-radius: 50%; background: var(--surface); box-shadow: var(--shadow); }
+  .dock.ring nav .ring-item { width: 46px; height: 46px; }
+  .dock.ring .ring-item[aria-pressed="true"]:not(.swatch) { background: color-mix(in srgb, var(--accent) 24%, var(--surface)); }
+  .dock.ring .swatch.ring-item[aria-pressed="true"] { box-shadow: 0 0 0 3px var(--accent), var(--shadow); }
+  .dock.ring.open .ring-item:disabled { opacity: .45; }
+  .dock.ring #width.ring-item { width: 120px; height: 34px; padding: 0 10px; border-radius: 999px; background: var(--surface); box-shadow: var(--shadow); }
+  /* guided tour: a card that never blocks the canvas, and a pulsing ring around what it's talking about */
+  .tour { position: fixed; z-index: 27; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 64px); translate: -50% 0; width: min(420px, calc(100vw - 24px));
+    display: grid; gap: 10px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
+  .tour p { margin: 0; }
+  .tour-step { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .tour-text { font-size: 17px; line-height: 1.4; text-wrap: pretty; }
+  .tour-actions { display: flex; justify-content: space-between; gap: 8px; }
+  .tour-actions .btn { min-height: 38px; }
+  .tour.done .tour-text::before { content: '✓ '; color: var(--ink-green); font-weight: 700; }
+  .tour-spot { position: fixed; z-index: 26; pointer-events: none; border: 3px solid var(--accent); border-radius: 999px;
+    transition: left .2s, top .2s, width .2s, height .2s; animation: spot 1.4s ease-in-out infinite; }
+  @keyframes spot { 50% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--accent) 22%, transparent); } }
+  .ring-scrim { position: fixed; inset: 0; z-index: 24; background: rgb(0 0 0 / .18); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
   .swatch {
     width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent;
     display: grid; place-items: center;
@@ -192,12 +227,12 @@
   #ai-q:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
   .ai-note { margin: 0; font-size: 12px; color: var(--muted); }
 
-  /* the opening: a navy page with the 8 on it, torn in two along a ragged line. Brand colours, whatever the theme */
-  .reveal { position: fixed; inset: 0; z-index: 100; color: #78d1f9; touch-action: none; user-select: none; -webkit-user-select: none; }
+  /* the opening: a page in the logo colours (navy and sky unless changed in Settings) with the 8 on it, torn in two along a ragged line */
+  .reveal { position: fixed; inset: 0; z-index: 100; color: var(--logo-fg, #78d1f9); touch-action: none; user-select: none; -webkit-user-select: none; }
   .reveal.torn { pointer-events: none; }
   .reveal .half, .reveal .rim, .reveal .sheet { position: absolute; inset: 0; }
-  .reveal .sheet { background: radial-gradient(ellipse 70% 60% at 50% 50%, #0f3658, #0a2b48); }
-  .reveal .rim { background: #dcedf8; } /* the pale fibres a tear exposes */
+  .reveal .sheet { background: radial-gradient(ellipse 70% 60% at 50% 50%, color-mix(in srgb, var(--logo-bg, #0a2b48), #fff 4%), var(--logo-bg, #0a2b48)); }
+  .reveal .rim { background: var(--logo-rim, #dcedf8); } /* the pale fibres a tear exposes */
   .reveal.torn .half { transition: transform .75s cubic-bezier(.45,0,.2,1); }
   .reveal.torn .half-t { transform: translateY(-80%) rotate(-4deg); }
   .reveal.torn .half-b { transform: translateY(80%) rotate(3deg); }
@@ -205,14 +240,14 @@
     animation: rv-in .55s cubic-bezier(.2,.8,.2,1) both; }
   .reveal-8, .reveal-8 .loop { transition: color .15s; }
   .reveal-8 { cursor: grab; }
-  .reveal-8 .held, .reveal-8.taut { color: #b6e8fd; } /* a finger is in it */
+  .reveal-8 .held, .reveal-8.taut { color: color-mix(in srgb, var(--logo-fg, #78d1f9) 80%, #fff); } /* a finger is in it */
   .reveal.torn .loop { transition: transform .75s cubic-bezier(.45,0,.2,1); }
   .reveal.torn .strands { opacity: 0; transition: opacity .08s; } /* the stretched band snaps */
   @keyframes rv-in { from { transform: scale(.8); opacity: 0; } }
   .reveal-hint { position: absolute; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom, 0px) + 92px); margin: 0 auto; padding: 0 24px; max-width: 30ch;
-    color: #cfe9fb; font-size: 17px; text-align: center; text-wrap: balance; }
+    color: var(--logo-fg, #78d1f9); opacity: .9; font-size: 17px; text-align: center; text-wrap: balance; }
   .reveal-skip { position: absolute; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 28px); transform: translateX(-50%);
-    padding: 8px 20px; border: 1px solid rgb(120 209 249 / .45); border-radius: 999px; background: none; color: #cfe9fb; font-weight: 600; }
+    padding: 8px 20px; border: 1px solid color-mix(in srgb, var(--logo-fg, #78d1f9) 45%, transparent); border-radius: 999px; background: none; color: var(--logo-fg, #78d1f9); font-weight: 600; }
 </style>
 </head>
 <body class="tool-select">
@@ -275,6 +310,7 @@
   </div>
   <nav>
     <button type="button" id="portal-add">Add a portal…</button>
+    <button type="button" id="tour-start">Show me around</button>
     <a href="/canvases">All canvases</a>
     <a href="/settings">Settings</a>
   </nav>
@@ -324,7 +360,9 @@
   </footer>
 </aside>
 
+<div class="ring-scrim" id="ring-scrim" hidden></div>
 <div class="dock">
+  <button class="fab" id="fab" type="button" aria-label="Tools" aria-expanded="false"></button>
   <div class="bar options" id="options">
     <div class="group" id="types"></div>
     <span class="sep" id="sep-types"></span>

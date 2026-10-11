@@ -37,6 +37,7 @@
     <div class="options">
       <button class="option" type="button" data-start="blank"><b>A blank canvas</b><span>Nothing to set up. Put your first thought anywhere.</span></button>
       <button class="option" type="button" data-start="sample"><b>A sample canvas</b><span>A few notes that show how ThinkSL8 works. Edit or delete them whenever you like.</span></button>
+      <button class="option" type="button" data-start="tour"><b>A quick guided tour</b><span>About a minute, step by step: open your tools, draw, write and link a note. Skip whenever you like.</span></button>
     </div>
     <div><button class="skip" type="button" id="skip-all">Skip setup</button></div>
   </section>
@@ -65,7 +66,7 @@ async function finish(connect) {
   try {
     const { note } = await api('/api/notes', { method: 'POST', body: start === 'sample' ? { sample: true } : { title: 'Untitled' } });
     await api('/api/me/onboarded', { method: 'POST' });
-    try { sessionStorage.setItem('sl8:reveal', '1'); } catch {}
+    try { sessionStorage.setItem('sl8:reveal', '1'); if (start === 'tour') sessionStorage.setItem('sl8:tour', '1'); } catch {}
     const canvas = '/note?id=' + encodeURIComponent(note.id);
     location.replace(connect ? '/api/ai/openrouter/start?return=' + encodeURIComponent(canvas) : canvas);
   } catch (e) {

@@ -18,6 +18,7 @@ def items(pg, kind=None):
 with sync_playwright() as p:
     br = p.chromium.launch()
     ctx = br.new_context(extra_http_headers=RUN_IP, viewport={"width": 1280, "height": 820})
+    ctx.add_init_script("localStorage.setItem('sl8:toolbar', '\"bar\"')")  # these checks drive the bottom bar; the ring has its own below
     pg = ctx.new_page()
     errors = []
     pg.on("pageerror", lambda e: errors.append(str(e)))
@@ -167,11 +168,28 @@ with sync_playwright() as p:
     ok(pg.locator(".reveal").count() == 1 and pg.is_visible("text=Drag a loop to stretch it"), "on a computer the opening waits too, and says to drag a loop")
     hx, hy = pg.evaluate("(() => { const m = document.querySelector('.reveal-8').getScreenCTM(); return [m.e, m.f - 80*m.d]; })()")
     pg.mouse.move(hx, hy); pg.mouse.down()
-    for k in range(1, 9): pg.mouse.move(hx, hy - 25 * k)
+    for k in range(1, 15): pg.mouse.move(hx, hy - 25 * k)
     pg.mouse.up()
     pg.wait_for_selector(".reveal", state="detached", timeout=3000)
     ok(True, "dragging a loop with the mouse stretches it until the page tears")
     ok(any(s.startswith("blob:") for s in pg.evaluate("window.__played || []")), "your own sound plays when the page tears")
+
+    # logo colours: Settings recolours the tab icon, the install manifest and app icons, and the opening
+    pg.goto(B + "/settings")
+    pg.evaluate("""for (const [id, v] of [['#logo-bg', '#ffffff'], ['#logo-fg', '#d0021b']]) { const i = document.querySelector(id); i.value = v; i.dispatchEvent(new Event('input')); }""")
+    links = pg.evaluate("[...document.querySelectorAll('link[rel=icon], link[rel=manifest], link[rel=apple-touch-icon]')].map(l => l.getAttribute('href'))")
+    ok(all("bg=ffffff&fg=d0021b" in h for h in links) and pg.evaluate("document.querySelector('meta[name=theme-color]').content") == "#ffffff", "picking logo colours switches the tab icon, app icon and install manifest", str(links))
+    man = json.loads(urllib.request.urlopen(urllib.request.Request(B + "/api/logo/manifest?bg=ffffff&fg=d0021b", headers=RUN_IP)).read())
+    ok(man["theme_color"] == "#ffffff" and man["id"] == "/" and all("bg=ffffff&fg=d0021b" in i["src"] for i in man["icons"]), "the install manifest carries the colours and keeps the same app id")
+    from PIL import Image
+    for name in ("icon-512", "icon-maskable-512"):
+        im = Image.open(io.BytesIO(urllib.request.urlopen(urllib.request.Request(B + f"/api/logo/{name}.png?bg=ffffff&fg=d0021b", headers=RUN_IP)).read())).convert("RGBA")
+        cols = {c for _, c in im.getcolors(1 << 20)}
+        ok((255, 255, 255, 255) in cols and (208, 2, 27, 255) in cols and (10, 43, 72, 255) not in cols, f"{name} is redrawn in the chosen colours")
+    svg = urllib.request.urlopen(urllib.request.Request(B + "/api/logo/favicon.svg?bg=ffffff&fg=d0021b", headers=RUN_IP)).read().decode()
+    ok("#ffffff" in svg and "#d0021b" in svg and "#0a2b48" not in svg, "the tab icon is redrawn in the chosen colours")
+    pg.click("#logo-reset")
+    ok("bg=" not in pg.evaluate("document.querySelector('link[rel=icon]').getAttribute('href')"), "Reset goes back to navy and sky")
 
     # the stretch-and-tear opening on a phone
     m = br.new_context(extra_http_headers=RUN_IP, viewport={"width": 390, "height": 844}, device_scale_factor=2, has_touch=True, is_mobile=True, storage_state=ctx.storage_state())
@@ -195,11 +213,11 @@ with sync_playwright() as p:
     ok(still, "a small stretch springs back")
     mp.wait_for_timeout(700)
     touch("touchStart", [(tx, ty), (bx, by)])
-    for k in range(1, 8): touch("touchMove", [(tx, ty - 10 * k), (bx, by + 10 * k)])
+    for k in range(1, 11): touch("touchMove", [(tx, ty - 10 * k), (bx, by + 10 * k)])
     mp.wait_for_timeout(50)
     ok("torn" not in (mp.get_attribute(".reveal", "class") or ""), "a long stretch rips the page but holds")
     mp.screenshot(path=f"{OUT}/s4b-stretch-phone.png")
-    for k in range(8, 14): touch("touchMove", [(tx, ty - 10 * k), (bx, by + 10 * k)])
+    for k in range(11, 17): touch("touchMove", [(tx, ty - 10 * k), (bx, by + 10 * k)])
     mp.wait_for_timeout(250)
     mp.screenshot(path=f"{OUT}/s4c-tearing-phone.png")
     touch("touchEnd", [])
@@ -207,6 +225,55 @@ with sync_playwright() as p:
     ok(True, "stretching the 8 far enough tears the page open")
     mp.screenshot(path=f"{OUT}/s5-phone-canvas.png")
     ok(not mp.evaluate("document.documentElement.scrollWidth > innerWidth"), "no sideways scroll on a phone")
+
+    # the ring: one button, tools in circles around it; and the guided tour, step by step
+    rc = br.new_context(extra_http_headers=RUN_IP, viewport={"width": 390, "height": 844}, device_scale_factor=2, has_touch=True, is_mobile=True, storage_state=ctx.storage_state())
+    rc.add_init_script("localStorage.setItem('sl8:toolbar', '\"ring\"'); localStorage.removeItem('sl8:fab'); localStorage.setItem('sl8:tool', '\"select\"')")
+    rp = rc.new_page()
+    rp.on("pageerror", lambda e: errors.append(str(e)))
+    rp.goto(home)
+    rp.wait_for_selector("#status:text('Saved')")
+    ok(rp.evaluate("document.querySelector('.dock').matches('.ring:not(.open)') && getComputedStyle(document.querySelector('[data-tool=pen]')).opacity === '0'"), "on a phone the tools fold into one round button")
+    rcdp = rc.new_cdp_session(rp)
+    def rtouch(kind, pts): rcdp.send("Input.dispatchTouchEvent", {"type": kind, "touchPoints": [{"x": x, "y": y, "id": i} for i, (x, y) in enumerate(pts)]})
+    def drag(a, b, steps=8):
+        rtouch("touchStart", [a])
+        for k in range(1, steps + 1): rtouch("touchMove", [(a[0] + (b[0] - a[0]) * k / steps, a[1] + (b[1] - a[1]) * k / steps)])
+        rtouch("touchEnd", [])
+    onscreen = """[...document.querySelectorAll('.ring-item')].filter(e => !e.closest('[hidden]') && getComputedStyle(e).display !== 'none')
+      .every(e => { const r = e.getBoundingClientRect(); return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; })"""
+    rp.click("#menu-open"); rp.click("#tour-start")
+    rp.wait_for_selector(".tour")
+    step = lambda n: rp.wait_for_function(f"document.querySelector('.tour-step')?.textContent.startsWith('{n} of')", timeout=4000)
+    rp.click(".tour .btn.primary"); step(2)
+    rp.tap("#fab"); step(3)
+    rp.wait_for_timeout(300)
+    ok(rp.evaluate(onscreen), "tapping it fans the tools out around it, all on screen; the tour moves on by itself")
+    rp.tap("[data-tool=pen]"); step(4)
+    rp.wait_for_timeout(300)
+    ok(rp.evaluate(onscreen) and rp.locator(".swatch").count() >= 8, "with the pen picked, its pen types and colours ring the tools")
+    rp.locator(".swatch").nth(2).tap()
+    rp.mouse.click(60, 300)  # the canvas: closes the ring
+    ok(not rp.evaluate("document.querySelector('.dock').classList.contains('open')"), "tapping the canvas closes the ring")
+    drag((80, 300), (300, 360))
+    step(5)
+    ok(items(rp, "stroke")[-1]["c"] == "red", "drawing uses the colour picked in the ring; the tour sees the stroke")
+    rp.tap("#fab"); rp.wait_for_timeout(300); rp.tap("[data-tool=text]"); rp.mouse.click(60, 300)
+    rp.mouse.click(120, 480); rp.keyboard.type("From the tour"); rp.mouse.click(300, 650)
+    step(6)
+    ok(True, "placing a note with the text tool moves the tour on")
+    for n in (7, 8): rp.click(".tour .btn.primary"); step(n)
+    rp.click(".tour .btn.primary")
+    ok(rp.locator(".tour").count() == 0, "the tour finishes")
+    # drag the button to the left edge; the ring still opens fully on screen
+    fx, fy = rp.evaluate("(() => { const r = document.querySelector('#fab').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2]; })()")
+    drag((fx, fy), (30, 420))
+    rp.wait_for_timeout(200)
+    moved = rp.evaluate("JSON.parse(localStorage.getItem('sl8:fab') || 'null')")
+    rp.tap("#fab"); rp.wait_for_timeout(350)
+    ok(moved and moved["fx"] < 0.2 and rp.evaluate("document.querySelector('.dock').classList.contains('open')") and rp.evaluate(onscreen), "the button can be dragged anywhere, and the ring still opens fully on screen")
+    rp.screenshot(path=f"{OUT}/s6-ring-left.png")
+    rp.keyboard.press("Escape")
     ok(not errors, "no script errors", "; ".join(errors[:3]))
     br.close()
 

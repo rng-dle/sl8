@@ -46,7 +46,9 @@
   const fail = (status, msg) => Object.assign(new Error(msg), { status });
 
   window.previewNoteId = () => { try { return sessionStorage.getItem('preview:note') || db.home; } catch { return db.home; } };
-  window.previewReset = () => { store.set(KEY, null); store.set('sl8:tearSound', null); try { sessionStorage.removeItem('preview:note'); } catch {} location.reload(); };
+  window.previewReset = () => { store.set(KEY, null); store.set('sl8:tearSound', null); store.set('sl8:logo', null); try { sessionStorage.removeItem('preview:note'); } catch {} location.reload(); };
+  // stands in for Settings > Logo colours
+  window.previewLogo = () => { store.set('sl8:logo', { bg: document.getElementById('pv-bg').value, fg: document.getElementById('pv-fg').value }); applyLogo(); };
   // stands in for Settings > Tear sound
   window.previewSound = async (input) => {
     const f = input.files[0];

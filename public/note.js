@@ -1085,7 +1085,7 @@ function renderOptions() {
   opts.hidden = !styled && !sound && !finger;
   updateFinger();
   $('#sound').setAttribute('aria-pressed', String(scribble.on));
-  if (!styled) return;
+  if (!styled) return ringSync();
   if (t === 'pen') {
     $('#types').replaceChildren(...Object.entries(PEN_TYPES).map(([k, [label, icon]]) => {
       const b = document.createElement('button');
@@ -1113,6 +1113,7 @@ function renderOptions() {
   const [lo, hi] = WIDTH[t], w = $('#width');
   w.min = lo; w.max = hi; w.step = t === 'pen' ? 0.5 : 1; w.value = tool.width[t];
   w.setAttribute('aria-label', t === 'text' ? 'Text size' : 'Line width');
+  ringSync();
 }
 // any colour: the native picker gives RGB, HSL and hex on every platform
 $('#custom-color').addEventListener('input', (e) => { tool.color[tool.name] = e.target.value; saveTools(); });
@@ -1131,6 +1132,151 @@ for (const b of document.querySelectorAll('[data-tool]')) b.onclick = () => setT
 $('#undo').onclick = undo;
 $('#redo').onclick = redo;
 $('#zoom').onclick = () => zoomAt(board.clientWidth / 2, board.clientHeight / 2, 1 / cam.z);
+
+/* ---------- ring: one floating button; the same tool buttons fan out in circles around it (Settings > Tools) ---------- */
+// Inner ring: the tools, undo and redo. Outer ring: the current tool's options, with the size slider along the bottom.
+const ringOn = () => store.get('sl8:toolbar') !== 'bar' && Math.min(innerWidth, innerHeight) >= 360; // small screens keep the bar
+const ringOpen = () => $('.dock').classList.contains('open');
+const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+let fabAt = store.get('sl8:fab'); // { fx, fy }: fractions of the window, so it stays put through rotation
+
+function ringSync() {
+  const t = tool.name, fab = $('#fab');
+  fab.innerHTML = t === 'pen' ? `<svg viewBox="0 0 24 24">${PEN_TYPES[tool.type][1]}</svg>` : $(`[data-tool="${t}"] svg`).outerHTML;
+  fab.style.setProperty('--fab-c', tool.color[t] ? cssColor(tool.color[t]) : '');
+  fab.setAttribute('aria-label', 'Tools: ' + $(`[data-tool="${t}"]`).getAttribute('aria-label'));
+  layoutRing();
+}
+
+function layoutRing() {
+  const dock = $('.dock'), on = ringOn();
+  if (!on) { dock.classList.remove('ring', 'open'); $('#ring-scrim').hidden = true; return; }
+  if (!dock.classList.contains('ring')) { // switching from the bar: start folded, without animating out of it
+    dock.classList.add('ring', 'still');
+    requestAnimationFrame(() => requestAnimationFrame(() => dock.classList.remove('still')));
+  }
+  // mark every item before measuring, so new swatches start folded instead of fading out
+  for (const el of dock.querySelectorAll('nav.bar > button, #options button, #options label, #width')) el.classList.add('ring-item');
+  const open = ringOpen();
+  const shown = (el) => !el.closest('[hidden]') && getComputedStyle(el).display !== 'none';
+  const inner = [...dock.querySelectorAll('nav.bar > button')].filter(shown);
+  const outer = [...dock.querySelectorAll('#options button, #options label')].filter(shown);
+  const slider = shown($('#width')) ? $('#width') : null;
+  const r1 = 88, step = 38, gap = slider ? 1.3 : 0; // gap: radians kept free at the bottom for the slider
+  const r2 = Math.max(148, (outer.length * step) / (2 * Math.PI - gap));
+  let n = 0;
+  const place = (el, x, y) => {
+    el.style.setProperty('--x', (open ? x : 0) + 'px');
+    el.style.setProperty('--y', (open ? y : 0) + 'px');
+    el.style.setProperty('--d', (open ? n++ * 0.012 : 0) + 's'); // a quick stagger as they fan out
+  };
+  inner.forEach((el, i) => { const a = -Math.PI / 2 + (i * 2 * Math.PI) / inner.length; place(el, r1 * Math.cos(a), r1 * Math.sin(a)); });
+  outer.forEach((el, i) => { const a = -Math.PI / 2 + ((i - (outer.length - 1) / 2) * step) / r2; place(el, r2 * Math.cos(a), r2 * Math.sin(a)); });
+  if (slider) place(slider, 0, r2);
+  // open near an edge: the button slides in just far enough for the whole ring to fit
+  const reach = outer.length || slider ? r2 + 26 : r1 + 30, m = 8;
+  const x = clamp((fabAt?.fx ?? 1) * innerWidth, 40, innerWidth - 40), y = clamp((fabAt?.fy ?? 1) * innerHeight, 40, innerHeight - 56);
+  const fit = (v, size) => (size < 2 * (reach + m) ? size / 2 : clamp(v, reach + m, size - reach - m));
+  dock.style.setProperty('--fx', (open ? fit(x, innerWidth) : x) + 'px');
+  dock.style.setProperty('--fy', (open ? fit(y, innerHeight) : y) + 'px');
+}
+
+function openRing(on) {
+  $('.dock').classList.toggle('open', on);
+  $('#ring-scrim').hidden = !on;
+  $('#fab').setAttribute('aria-expanded', String(on));
+  layoutRing();
+}
+
+// tap to open; drag to move it anywhere
+let fabDrag = null;
+$('#fab').addEventListener('pointerdown', (e) => {
+  $('#fab').setPointerCapture(e.pointerId);
+  fabDrag = { x: e.clientX, y: e.clientY, moved: false };
+});
+$('#fab').addEventListener('pointermove', (e) => {
+  if (!fabDrag || ringOpen()) return;
+  if (!fabDrag.moved && Math.hypot(e.clientX - fabDrag.x, e.clientY - fabDrag.y) < 8) return;
+  fabDrag.moved = true;
+  $('.dock').classList.add('dragging');
+  fabAt = { fx: e.clientX / innerWidth, fy: e.clientY / innerHeight };
+  layoutRing();
+});
+$('#fab').addEventListener('pointerup', () => {
+  $('.dock').classList.remove('dragging');
+  if (fabDrag?.moved) store.set('sl8:fab', fabAt);
+  else if (fabDrag) openRing(!ringOpen()); // a tap; toggling here works even when a touch browser skips the click
+  fabDrag = null;
+});
+$('#fab').addEventListener('click', (e) => { if (e.detail === 0) openRing(!ringOpen()); }); // keyboard (Enter, Space)
+$('#ring-scrim').addEventListener('pointerdown', (e) => { e.preventDefault(); openRing(false); });
+// tools with nothing more to choose close the ring; drawing tools keep it open for their colours and sizes
+$('nav.bar').addEventListener('click', (e) => {
+  const b = e.target.closest('[data-tool], #zoom');
+  if (b && ringOpen() && !['pen', 'hl', 'eraser', 'text'].includes(b.dataset.tool)) openRing(false);
+});
+addEventListener('keydown', (e) => { if (e.key === 'Escape' && ringOpen()) openRing(false); });
+addEventListener('resize', layoutRing);
+
+/* ---------- guided tour: short steps that wait for you to do each thing; Skip at any point ---------- */
+function tour() {
+  if ($('.tour')) return;
+  const touch = matchMedia('(pointer: coarse)').matches, ring = ringOn();
+  const count = (k) => [...items.values()].filter((i) => i.kind === k).length;
+  const steps = [
+    { text: touch ? 'This is your canvas, and it never ends. Move around with two fingers, and pinch to zoom.'
+      : 'This is your canvas, and it never ends. Scroll to move around, and hold Ctrl while scrolling to zoom.' },
+    ring ? { text: 'Your tools live in this button. Tap it to open them. You can also drag it anywhere.', at: '#fab', done: ringOpen }
+      : { text: 'Your tools live in this bar.', at: 'nav.bar' },
+    { text: `Pick the pen. Its pen types and colours appear ${ring ? 'in the outer ring' : 'above'}.`, at: '[data-tool="pen"]', done: () => tool.name === 'pen' },
+    { text: `${ring ? 'Tap the canvas to close the ring, then write' : 'Now write'} or draw anything.`, done: (b) => count('stroke') > b.stroke },
+    { text: `Pick T, the text tool, then ${touch ? 'tap' : 'click'} where you want a note and type.`, at: '[data-tool="text"]', done: (b) => count('text') > b.text },
+    { text: 'To link two ideas, pick Connect (the arrow) and drag from one note to the other.', at: '[data-tool="connect"]' },
+    { text: 'Each canvas can have its own theme, pattern and background image, and portals into more canvases. It\'s all in this menu.', at: '#menu-open' },
+    { text: 'That\'s the basics. You can see this again any time from the ⋯ menu. Think without boundaries.' },
+  ];
+  const card = document.createElement('div'), spot = document.createElement('div');
+  card.className = 'tour';
+  card.setAttribute('role', 'dialog');
+  card.setAttribute('aria-label', 'Guided tour');
+  card.innerHTML = '<p class="tour-step"></p><p class="tour-text" aria-live="polite"></p><div class="tour-actions"><button class="btn quiet" type="button">Skip tour</button><button class="btn primary" type="button">Next</button></div>';
+  spot.className = 'tour-spot';
+  const [skip, next] = card.querySelectorAll('button');
+  let i = -1, base = null, timer = 0;
+  const end = () => { clearInterval(timer); card.remove(); spot.remove(); };
+  const go = (n) => {
+    if (n >= steps.length) return end();
+    i = n;
+    base = { stroke: count('stroke'), text: count('text') };
+    card.classList.remove('done');
+    card.querySelector('.tour-step').textContent = `${i + 1} of ${steps.length}`;
+    card.querySelector('.tour-text').textContent = steps[i].text;
+    next.textContent = i === steps.length - 1 ? 'Done' : 'Next';
+    skip.hidden = i === steps.length - 1;
+  };
+  const tick = () => {
+    const s = steps[i];
+    let el = s.at && $(s.at);
+    if (el?.classList.contains('ring-item') && !ringOpen()) el = $('#fab'); // its tool is tucked inside the ring
+    const r = el?.getBoundingClientRect();
+    spot.hidden = !r?.width;
+    if (r?.width) Object.assign(spot.style, { left: r.left - 7 + 'px', top: r.top - 7 + 'px', width: r.width + 14 + 'px', height: r.height + 14 + 'px' });
+    if (s.done && !card.classList.contains('done') && s.done(base)) { // they did it: tick, then move on
+      card.classList.add('done');
+      setTimeout(() => i === steps.indexOf(s) && go(i + 1), 700);
+    }
+  };
+  skip.onclick = end;
+  next.onclick = () => go(i + 1);
+  const begin = () => { // after the opening has torn away
+    if ($('.reveal')) return setTimeout(begin, 300);
+    document.body.append(spot, card);
+    go(0);
+    timer = setInterval(tick, 200);
+  };
+  begin();
+}
+$('#tour-start').onclick = () => { closeMenu(); tour(); };
 
 addEventListener('keydown', (e) => {
   const typing = e.target.closest?.('input, textarea');
@@ -1365,14 +1511,15 @@ function reveal() {
   };
   rip(0);
 
-  // t (0..1): tension. The loops follow the fingers; past 45% the page starts to rip; at 1 it tears through.
-  const reach = () => Math.max(120, innerHeight * 0.2); // px of extra finger distance to tear
+  // t (0..1): tension. The loops follow the fingers; the first 62% only stretches the 8, then the page rips; at 1 it tears through.
+  const reach = () => Math.max(174, innerHeight * 0.29); // px of extra finger distance to tear
+  const RIP = 0.62;
   let t = 0, gone = false, frame = 0;
   const timers = [];
   const pull = (v) => {
     t = v;
     stretch8(svg, (v * reach()) / 2 / svg.getScreenCTM().a);
-    rip(Math.max(0, (v - 0.45) / 0.55));
+    rip(Math.max(0, (v - RIP) / (1 - RIP)));
     if (v >= 1) tear();
   };
   const tween = (to, ms, ease) => { // animate the tension (auto play, spring back)
@@ -1494,6 +1641,7 @@ async function start() {
     setStatus(pending.size ? 'Saving…' : 'Saved');
     updateHint();
     showTrail();
+    try { if (sessionStorage.getItem('sl8:tour')) { sessionStorage.removeItem('sl8:tour'); tour(); } } catch {} // chosen during setup
     schedule(true);
     const target = location.hash.match(/^#item-([\w-]+)$/)?.[1];
     if (target) requestAnimationFrame(() => focusItem(target));
