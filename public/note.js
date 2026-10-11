@@ -1329,10 +1329,8 @@ function reveal() {
   let asked = null;
   try { asked = sessionStorage.getItem('sl8:reveal'); sessionStorage.removeItem('sl8:reveal'); } catch {}
   if (!asked) return;
-  const mode = store.get('sl8:revealMode') || (store.get('sl8:revealSeen') ? 'short' : 'full');
-  store.set('sl8:revealSeen', true);
+  const mode = store.get('sl8:revealMode') || 'full'; // full: waits for you to stretch it; short ("Quick"): plays by itself
   if (mode === 'off' || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  const touch = matchMedia('(pointer: coarse)').matches && mode === 'full';
   const tearSound = tearSoundPlayer();
 
   const el = document.createElement('div');
@@ -1406,22 +1404,32 @@ function reveal() {
   el.querySelector('.reveal-skip').onclick = finish;
   addEventListener('keydown', finish);
 
-  if (!touch) { // desktop, or the short version: it stretches and tears on its own
-    timers.push(setTimeout(() => tween(1, mode === 'full' ? 1100 : 420, smooth), mode === 'full' ? 450 : 0));
+  if (mode === 'short') { // "Quick" in Settings: it stretches and tears by itself
+    tween(1, 420, smooth);
     el.addEventListener('pointerdown', finish);
     return;
   }
 
-  // phones and tablets: one finger in each loop, then stretch
-  timers.push(setTimeout(() => { el.querySelector('.reveal-hint').hidden = false; el.querySelector('.reveal-skip').hidden = false; }, 700));
-  timers.push(setTimeout(finish, 15000)); // never hold anyone here
+  // it waits for you: a finger in each loop (or one loop dragged with a mouse or pen), stretched until the page tears
+  const hint = el.querySelector('.reveal-hint');
+  if (!matchMedia('(pointer: coarse)').matches) hint.textContent = 'Drag a loop to stretch it';
+  timers.push(setTimeout(() => { hint.hidden = false; el.querySelector('.reveal-skip').hidden = false; }, 700));
   const fingers = new Map(); // pointerId -> { loop, x, y }
-  let start = 0;
-  const holeAt = (x, y) => { // nearest free loop; anywhere on or inside it counts
-    const m = svg.getScreenCTM(), u = (t * reach()) / 2 / m.a, taken = [...fingers.values()].map((f) => f.loop);
-    return [0, 1].map((i) => ({ i, d: Math.hypot(x - m.e, y - (m.f + (i ? 1 : -1) * (80 + u) * m.d)) }))
-      .sort((a, b) => a.d - b.d).find((h) => h.d < 120 * m.a && !taken.includes(h.i))?.i ?? -1;
+  let start = 0, anchor = null; // a mouse or pen holds one loop; the other loop's spot is the anchor
+  const hole = (i) => {
+    const m = svg.getScreenCTM(), u = (t * reach()) / 2 / m.a;
+    return { x: m.e, y: m.f + (i ? 1 : -1) * (80 + u) * m.d };
   };
+  const holeAt = (x, y) => { // nearest free loop; anywhere on or inside it counts
+    const taken = [...fingers.values()].map((f) => f.loop), r = 120 * svg.getScreenCTM().a;
+    return [0, 1].map((i) => ({ i, d: Math.hypot(x - hole(i).x, y - hole(i).y) }))
+      .sort((a, b) => a.d - b.d).find((h) => h.d < r && !taken.includes(h.i))?.i ?? -1;
+  };
+  const grips = () => { // the two points being pulled apart, once there are two
+    const f = [...fingers.values()];
+    return f.length === 2 ? f : f.length === 1 && anchor ? [f[0], anchor] : null;
+  };
+  const apart = ([a, b]) => Math.hypot(a.x - b.x, a.y - b.y);
   el.addEventListener('pointerdown', (e) => {
     if (e.target.closest('.reveal-skip')) return;
     const loop = holeAt(e.clientX, e.clientY);
@@ -1429,25 +1437,26 @@ function reveal() {
     el.setPointerCapture(e.pointerId);
     fingers.set(e.pointerId, { loop, x: e.clientX, y: e.clientY });
     loops[loop].classList.add('held');
-    svg.classList.toggle('taut', fingers.size === 2);
-    if (fingers.size === 2) {
+    if (e.pointerType !== 'touch') anchor = hole(1 - loop);
+    const g = grips();
+    svg.classList.toggle('taut', !!g);
+    if (g) {
       cancelAnimationFrame(frame);
-      const [f1, f2] = [...fingers.values()];
-      start = Math.hypot(f1.x - f2.x, f1.y - f2.y) - t * reach(); // keep any stretch still springing back
+      start = apart(g) - t * reach(); // keep any stretch still springing back
     }
   });
   el.addEventListener('pointermove', (e) => {
     const f = fingers.get(e.pointerId);
     if (!f || gone) return;
     f.x = e.clientX; f.y = e.clientY;
-    if (fingers.size < 2) return;
-    const [f1, f2] = [...fingers.values()];
-    pull(Math.min(1, Math.max(0, Math.hypot(f1.x - f2.x, f1.y - f2.y) - start) / reach()));
+    const g = grips();
+    if (g) pull(Math.min(1, Math.max(0, apart(g) - start) / reach()));
   });
   const lift = (e) => {
     const f = fingers.get(e.pointerId);
     if (!f || gone) return;
     fingers.delete(e.pointerId);
+    if (e.pointerType !== 'touch') anchor = null;
     loops[f.loop].classList.remove('held');
     svg.classList.remove('taut');
     tween(0, 520, back); // not far enough: it springs back together

@@ -38,8 +38,9 @@ with sync_playwright() as p:
     pg.click("#connect")
     pg.wait_for_url("**/note?id=*")
     pg.wait_for_timeout(500)
-    ok(pg.locator(".reveal").count() == 1, "the infinity reveal plays after setup")
+    ok(pg.locator(".reveal").count() == 1, "the opening shows after setup")
     pg.screenshot(path=f"{OUT}/04-reveal.png")
+    pg.click(".reveal-skip")
     pg.wait_for_selector(".reveal", state="detached", timeout=5000)
     pg.wait_for_selector("#status:text('Saved')")
     ok(pg.locator(".tb").count() == 7, "sample canvas shows its notes")
@@ -112,13 +113,15 @@ with sync_playwright() as p:
     ok(True, "disconnect returns Settings to the connect screen")
     pg.screenshot(path=f"{OUT}/08-settings-off-dark.png", full_page=True)
 
-    # returning user: log out, log in, short reveal straight into the last canvas
+    # returning user: log out, log in, the opening (skipped by a key) straight into the last canvas
     email = pg.text_content("#email")
     pg.click("#logout")
     pg.wait_for_selector("#auth:not([hidden])")
     pg.fill("#email", email); pg.fill("#password", "correcthorse"); pg.click("#submit")
     pg.wait_for_url("**/note?id=*")
     ok(True, "logging in opens the last canvas directly")
+    pg.wait_for_selector(".reveal-8")
+    pg.keyboard.press("Escape")
     pg.wait_for_selector(".reveal", state="detached", timeout=3000)
 
     # search from the canvases page

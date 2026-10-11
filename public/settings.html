@@ -130,11 +130,11 @@
     </div>
     <div class="pref"><h3>Opening animation</h3>
       <div class="seg" role="radiogroup" aria-label="Opening animation">
-        <label><input type="radio" name="reveal" value="full"><span>Full</span></label>
-        <label><input type="radio" name="reveal" value="short"><span>Short</span></label>
+        <label><input type="radio" name="reveal" value="full"><span>Stretch</span></label>
+        <label><input type="radio" name="reveal" value="short"><span>Quick</span></label>
         <label><input type="radio" name="reveal" value="off"><span>Off</span></label>
       </div>
-      <p class="help sub">Plays when you open ThinkSL8. It's always off if your device asks for reduced motion.</p>
+      <p class="help sub">Stretch waits for you: put a finger in each loop of the 8 (or drag one with a mouse) and pull until the page tears. Quick plays by itself. It's always off if your device asks for reduced motion.</p>
     </div>
     <div class="pref"><h3>Tear sound</h3>
       <div class="seg" role="radiogroup" aria-label="Tear sound">
@@ -339,7 +339,7 @@ function bindPref(name, key, fallback, apply) {
 }
 bindPref('theme', 'sl8:theme', '', applyTheme);
 bindPref('bg', 'sl8:bg', 'dots');
-bindPref('reveal', 'sl8:revealMode', store.get('sl8:revealSeen') ? 'short' : 'full');
+bindPref('reveal', 'sl8:revealMode', 'full');
 
 // tear sound (this device): the built-in rip, the user's own audio file, or nothing
 let playTear = tearSoundPlayer();

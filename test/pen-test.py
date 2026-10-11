@@ -17,6 +17,8 @@ with sync_playwright() as p:
     pg.wait_for_url("**/welcome")
     pg.click("#skip-all")
     pg.wait_for_selector("#status:text('Saved')")
+    pg.click(".reveal-skip")
+    pg.wait_for_selector(".reveal", state="detached")
     pg.click("[data-tool=pen]")
     cdp = pg.context.new_cdp_session(pg)
 

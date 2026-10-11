@@ -30,6 +30,8 @@ with sync_playwright() as p:
     pg.click("#skip-all")
     pg.wait_for_url("**/note?id=*")
     pg.wait_for_selector("#status:text('Saved')")
+    pg.wait_for_selector(".reveal-8")
+    pg.keyboard.press("Escape")
     pg.wait_for_selector(".reveal", state="detached", timeout=5000)
     home = pg.url
 
@@ -158,10 +160,18 @@ with sync_playwright() as p:
     fc.value.set_files(wav)
     pg.wait_for_function("document.querySelector('#tear-name').textContent === 'tear.wav'")
     ok(pg.evaluate("tearFile.get().then((f) => f && f.size)") > 0, "your own tear sound is kept on this device")
-    pg.evaluate("sessionStorage.setItem('sl8:reveal', '1'); localStorage.setItem('sl8:revealMode', '\"short\"')")
+    pg.evaluate("sessionStorage.setItem('sl8:reveal', '1')")
     pg.goto(home)
-    pg.wait_for_selector(".reveal", state="detached", timeout=5000)
-    ok(any(s.startswith("blob:") for s in pg.evaluate("window.__played || []")), "it plays when the page tears")
+    pg.wait_for_selector(".reveal-8")
+    pg.wait_for_timeout(2500)
+    ok(pg.locator(".reveal").count() == 1 and pg.is_visible("text=Drag a loop to stretch it"), "on a computer the opening waits too, and says to drag a loop")
+    hx, hy = pg.evaluate("(() => { const m = document.querySelector('.reveal-8').getScreenCTM(); return [m.e, m.f - 80*m.d]; })()")
+    pg.mouse.move(hx, hy); pg.mouse.down()
+    for k in range(1, 9): pg.mouse.move(hx, hy - 25 * k)
+    pg.mouse.up()
+    pg.wait_for_selector(".reveal", state="detached", timeout=3000)
+    ok(True, "dragging a loop with the mouse stretches it until the page tears")
+    ok(any(s.startswith("blob:") for s in pg.evaluate("window.__played || []")), "your own sound plays when the page tears")
 
     # the stretch-and-tear opening on a phone
     m = br.new_context(extra_http_headers=RUN_IP, viewport={"width": 390, "height": 844}, device_scale_factor=2, has_touch=True, is_mobile=True, storage_state=ctx.storage_state())
