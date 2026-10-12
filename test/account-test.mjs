@@ -22,7 +22,7 @@ class Client {
   }
   async json(path, opts) { const r = await this.req(path, opts); return { status: r.status, body: await r.json().catch(() => ({})), headers: r.headers }; }
 }
-const inbox = async (to) => (await (await fetch(`${FAKE}/__emails?to=${encodeURIComponent(to)}`)).json());
+const inbox = async (to, about = 'Reset') => (await (await fetch(`${FAKE}/__emails?to=${encodeURIComponent(to)}`)).json()).filter((m) => m.subject.includes(about));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const text = (id, t, body) => ({ put: { id, kind: 'text', t, x: 0, y: t * 40, w: 320, s: 17, c: 'ink', text: body } });
 
@@ -30,6 +30,27 @@ const email = `acct-${rnd()}@example.com`, PW = 'correcthorse', PW2 = 'batteryst
 const a = new Client(), phone = new Client(), stranger = new Client();
 await a.json('/api/signup', { method: 'POST', body: { email, password: PW } });
 await phone.json('/api/login', { method: 'POST', body: { email, password: PW } });
+
+// confirming the email: sharing waits for it
+await wait(300);
+const confirm = await inbox(email, 'Confirm');
+ok(confirm.length === 1 && /\/verify\?token=[a-f0-9]{64}/.test(confirm[0].text), 'sign-up sends a confirmation link');
+ok((await a.json('/api/me')).body.verified === false, 'a new account starts unconfirmed');
+const toShare = (await a.json("/api/notes", { method: "POST", body: { title: "To share" } })).body.note;
+const shareIt = () => a.json(`/api/notes/${toShare.id}/shares`, { method: 'POST', body: { mode: 'read', area: '*' } });
+let s0 = await shareIt();
+ok(s0.status === 403 && s0.body.kind === 'verify', 'sharing waits for a confirmed email');
+ok((await stranger.json('/api/verify', { method: 'POST', body: { token: '0'.repeat(64) } })).status === 400, 'a made-up confirmation link fails');
+const vt = confirm[0].text.match(/token=([a-f0-9]{64})/)[1];
+s0 = await stranger.json('/api/verify', { method: 'POST', body: { token: vt } }); // opened on a device that isn't signed in
+ok(s0.status === 200 && (await a.json('/api/me')).body.verified === true, 'the link confirms the email, on any device');
+ok((await shareIt()).status === 201, 'sharing works once confirmed');
+ok((await stranger.json('/api/verify', { method: 'POST', body: { token: vt } })).status === 400, 'a confirmation link works once');
+const u2 = new Client(), e2 = `acct-${rnd()}@example.com`;
+await u2.json('/api/signup', { method: 'POST', body: { email: e2, password: PW } });
+const resends = [];
+for (let i = 0; i < 4; i++) resends.push((await u2.json('/api/verify/resend', { method: 'POST' })).status);
+ok(resends.join() === '200,200,200,429', 'confirmation emails can be resent, 3 an hour', resends.join());
 
 // password reset
 let r = await stranger.json('/api/password/forgot', { method: 'POST', body: { email: `nobody-${rnd()}@example.com` } });

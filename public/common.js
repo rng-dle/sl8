@@ -108,3 +108,20 @@ function aiReturnMessage() {
   history.replaceState(null, '', location.pathname + (q.size ? '?' + q : '') + location.hash);
   return msg;
 }
+
+// The bot check (Cloudflare Turnstile), when the server has it switched on. botCheck(el) shows it inside el and
+// gives back a function that returns the current token (and readies a fresh one: each token works once).
+async function botCheck(el) {
+  const { botCheck: sitekey } = await api('/api/config').catch(() => ({}));
+  if (!sitekey) return () => undefined;
+  await new Promise((ok) => {
+    const s = document.createElement('script');
+    s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';
+    s.onload = ok;
+    s.onerror = () => { toast("The bot check couldn't load. Check your connection and reload."); ok(); };
+    document.head.append(s);
+  });
+  if (!window.turnstile) return () => undefined;
+  const id = turnstile.render(el, { sitekey, theme: 'auto', size: 'flexible' });
+  return () => { const t = turnstile.getResponse(id); turnstile.reset(id); return t; };
+}

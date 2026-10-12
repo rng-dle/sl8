@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Confirm email · ThinkSL8</title>
+<meta name="referrer" content="no-referrer">
+<script>try{var t=JSON.parse(localStorage.getItem('sl8:theme'));if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0a2b48">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/style.css">
+<style>
+  main { max-width: 440px; margin: 0 auto; min-height: 100dvh; display: grid; align-content: center; gap: 20px;
+    padding-inline: 16px; padding-block: calc(env(safe-area-inset-top, 0px) + 32px) calc(env(safe-area-inset-bottom, 0px) + 32px); }
+  h1 { margin: 0; font: 400 34px/1.1 var(--font-display); }
+  .lede { margin: 0; color: var(--muted); }
+  form { display: grid; gap: 14px; }
+  .back { font-size: 15px; }
+</style>
+</head>
+<body>
+<main>
+  <a class="wordmark" href="/">Think<span data-mark></span></a>
+  <section style="display:grid;gap:16px">
+    <h1 id="head">Confirming your email…</h1>
+    <p class="lede" id="msg"></p>
+  </section>
+  <a class="back" href="/">Open ThinkSL8</a>
+</main>
+<div id="toast" class="toast" role="alert" hidden></div>
+<script src="/common.js"></script>
+<script src="/verify.js"></script>
+</body>
+</html>

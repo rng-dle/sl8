@@ -34,6 +34,7 @@ c -H "cookie: $CB" $B/api/notes | grep -q '"notes":\[\]' && pass "other user see
 
 for i in $(seq 1 10); do c -o /dev/null -H "$J" -d "{\"email\":\"$A\",\"password\":\"wrongwrong\"}" $B/api/login; done
 c -H "$J" -d "{\"email\":\"$A\",\"password\":\"hunter2hunter2\"}" $B/api/login | grep -q 'Too many' && pass "lockout after 10 failures" || die "lockout"
+command curl -s -H "cf-connecting-ip: 10.251.$((RANDOM%250)).$((RANDOM%250))" -H "$J" -d "{\"email\":\"$A\",\"password\":\"hunter2hunter2\"}" $B/api/login | grep -q "$A" && pass "the owner on another network can still sign in" || die "lockout is per network"
 
 c -H "cookie: $CA" -H "$J" -X POST -d '{}' $B/api/logout >/dev/null
 c -H "cookie: $CA" $B/api/me | grep -q 'Log in' && pass "logout ends session" || die "logout"

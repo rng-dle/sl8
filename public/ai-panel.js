@@ -75,7 +75,7 @@ function updateFoot() {
   $('#ai-q').placeholder = { selection: 'Ask about the selection…', canvas: 'Ask about this canvas…', all: "Ask about anything you've written…" }[scope] || 'Select notes to ask about them';
   const what = { selection: `the ${selection.size} selected item${selection.size === 1 ? '' : 's'}`, canvas: 'this canvas', all: 'all your canvases' }[scope];
   $('#ai-note').textContent = !c ? '' : scope
-    ? `Sends your question and the typed text from ${what} to ${c.label}. Handwriting isn't sent.`
+    ? `Sends your question, the typed text from ${what} and a picture of the handwriting ${scope === 'selection' ? 'in it' : 'on this canvas'} to ${c.label}.`
     : 'Your settings let AI read only what you select. Select notes on the canvas first.';
   $('#ai-send').disabled = !scope || !!aiBusy;
   for (const b of document.querySelectorAll('#ai-actions .btn')) b.disabled = !!aiBusy;
@@ -156,6 +156,23 @@ const NEXT_STEP = {
   scope: ['Change access in Settings', '/settings'],
 };
 
+// Handwriting and drawings in scope as one picture for the AI (typed text goes as text). "All canvases" sends this canvas's ink.
+// ponytail: one image of the whole scope; split into tiles if writing spread far apart gets too small to read
+function inkImage(scope) {
+  const ink = [...items.values()].filter((it) => it.kind === 'stroke' && (scope !== 'selection' || selection.has(it.id))).sort((a, b) => a.t - b.t);
+  if (!ink.length) return undefined;
+  const b = ink.map(bbox).reduce((a, r) => ({ x0: Math.min(a.x0, r.x0), y0: Math.min(a.y0, r.y0), x1: Math.max(a.x1, r.x1), y1: Math.max(a.y1, r.y1) }));
+  const pad = 16, w = b.x1 - b.x0 + 2 * pad, h = b.y1 - b.y0 + 2 * pad, k = Math.min(2, 2000 / Math.max(w, h));
+  const c = document.createElement('canvas');
+  c.width = Math.ceil(w * k); c.height = Math.ceil(h * k);
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = palette.paper;
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.setTransform(k, 0, 0, k, (pad - b.x0) * k, (pad - b.y0) * k);
+  for (const s of ink) drawStroke(ctx, s);
+  return c.toDataURL('image/jpeg', 0.85);
+}
+
 async function ask(action, question) {
   const scope = currentScope(), c = aiState?.connection;
   if (!scope || !c || aiBusy) return;
@@ -175,6 +192,7 @@ async function ask(action, question) {
       body: JSON.stringify({
         action, question, scope, noteId, tz: Intl.DateTimeFormat().resolvedOptions().timeZone,
         itemIds: scope === 'selection' ? [...selection] : undefined,
+        ink: inkImage(scope),
         history: action === 'ask' ? aiHistory.slice(-6) : [],
       }),
     });
@@ -197,6 +215,7 @@ async function ask(action, question) {
         if (m.t === 'sources') sources = m.sources;
         else if (m.t === 'delta') { text += m.text; paintAnswer(answer, text, sources); }
         else if (m.t === 'error') error = Object.assign(new Error(m.error), { kind: m.kind });
+        else if (m.t === 'note') msg.append(el('p', { class: 'ai-note' }, m.text));
         else if (m.t === 'done') done = true;
       }
     }

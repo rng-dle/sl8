@@ -1,5 +1,8 @@
+# Content-Security-Policy: scripts only from this site and the bot check (Turnstile). The one inline script,
+# the theme line at the top of each page, is allowed by its hash; if that line changes, update the hash.
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: same-origin
   X-Frame-Options: DENY
   Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'sha256-qyZZUZ8xbbgLBHaPya/O5eSzeRWI6qtRdMt984sw1l0=' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'

@@ -1,6 +1,7 @@
 // Sharing and sync against `wrangler dev`: links for the whole canvas or dot-grid areas, view vs edit,
 // area checks on writes, files through links, catching up on changes and deletes, turning links off. Exits non-zero on failure.
 const B = process.argv[2] || 'http://127.0.0.1:8787';
+const FAKE = process.env.FAKE || 'http://127.0.0.1:8788';
 let failed = 0;
 const ok = (cond, name, extra = '') => { console.log(`${cond ? 'ok  ' : 'FAIL'} - ${name}${!cond && extra ? `\n       ${extra}` : ''}`); if (!cond) failed++; };
 const rnd = () => Math.random().toString(36).slice(2, 8);
@@ -21,7 +22,11 @@ const ids = (r) => (r.body.items || []).map((i) => i.id).sort().join(',');
 const PNG = Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64'));
 
 const owner = new Client(), anon = new Client(), other = new Client();
-await owner.json('/api/signup', { method: 'POST', body: { email: `share-${rnd()}@example.com`, password: 'correcthorse' } });
+const ownerEmail = `share-${rnd()}@example.com`;
+await owner.json('/api/signup', { method: 'POST', body: { email: ownerEmail, password: 'correcthorse' } });
+await new Promise((r) => setTimeout(r, 300));
+const confirmMail = (await (await fetch(`${FAKE}/__emails?to=${encodeURIComponent(ownerEmail)}`)).json()).find((m) => /Confirm/.test(m.subject));
+await owner.json('/api/verify', { method: 'POST', body: { token: confirmMail.text.match(/token=([a-f0-9]{64})/)[1] } });
 await other.json('/api/signup', { method: 'POST', body: { email: `share-${rnd()}@example.com`, password: 'correcthorse' } });
 const { body: { note } } = await owner.json('/api/notes', { method: 'POST', body: { title: 'Shared' } });
 const N = `/api/notes/${note.id}`;
@@ -87,6 +92,23 @@ ok(f.status === 200 && f.headers.get('content-type') === 'image/png', 'a photo i
 await owner.json(N + '/ops', { method: 'POST', body: { ops: [{ put: { id: 'img-in', kind: 'image', t: 4, file, x: 900, y: 40, w: 10, h: 10 } }] } });
 f = await fetch(`${B}${E}/files/${file}`);
 ok(f.status === 404, "a photo outside the area doesn't load through the link");
+
+// history: going back to before the link's edits, then undoing that
+r = await owner.json(N + '/history');
+const before = r.body.points.find((p) => p.n >= 3)?.at; // the minute with the link's edits (and everything since)
+ok(r.status === 200 && r.body.points.length >= 1 && before, 'history lists the minutes with changes', JSON.stringify(r.body));
+ok((await other.json(N + '/history')).status === 404 && (await other.json(N + '/restore', { method: 'POST', body: { at: 1 } })).status === 404, "another account can't see or restore this canvas's history");
+const snapshot = ids(await owner.json(N)), cut = Date.now();
+await new Promise((res) => setTimeout(res, 20));
+await owner.json(N + '/ops', { method: 'POST', body: { ops: [{ del: 'in2' }, { del: 'out1' }, { put: text('vandal', 50, 50) }] } }); // someone wrecks it
+r = await owner.json(N + '/restore', { method: 'POST', body: { at: cut } });
+const undoPoint = r.body.undo;
+await new Promise((res) => setTimeout(res, 10));
+ok(r.status === 200 && ids(await owner.json(N)) === snapshot, 'the canvas goes back to how it was', ids(await owner.json(N)));
+r = await owner.json(`${N}?since=${t0}`);
+ok(r.body.gone.includes('vandal') && r.body.items.some((i) => i.id === 'in2'), 'open devices pick up the restore');
+await owner.json(N + '/restore', { method: 'POST', body: { at: undoPoint } }); // undo the restore
+ok(ids(await owner.json(N)).includes('vandal'), 'going back can itself be undone');
 
 // turning a link off
 await owner.json(`${N}/shares/${view.token}`, { method: 'DELETE' });

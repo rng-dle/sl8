@@ -53,7 +53,8 @@ The Python tests need `pip install playwright && playwright install chromium`.
 
 - **Connecting:** "Continue with OpenRouter" is a real OAuth PKCE flow. OpenRouter returns a key owned by the user, billed to their OpenRouter account, with free models available. OpenAI, Anthropic and Gemini connect by API key under Settings → AI → Advanced. Keys are checked against the provider before saving, encrypted with AES-GCM and never sent to the browser.
 - **Asking:** the server gathers typed text from the scope the user allows (selection, current canvas, or all canvases) and sends it with the question. When a scope has too much text to send whole, it uses SQLite FTS5 keyword search plus the most recent edits. Answers stream back with numbered sources that link to the original notes. "Add to canvas" is the only way an answer reaches the canvas, and Undo removes it.
-- **Limits:** 200 AI requests per user per day. Handwriting isn't readable by the AI yet.
+- **Handwriting:** the browser draws the ink in scope into one picture and sends it with the question, so models that accept images read handwriting and sketches. A text-only model answers from typed text and says the handwriting was left out. Search still covers typed text only.
+- **Limits:** 200 AI requests per user per day.
 
 ## Using it
 
@@ -75,5 +76,5 @@ The Python tests need `pip install playwright && playwright install chromium`.
 - Email verification on sign-up.
 - Bot protection on sign-up beyond the rate limits (Cloudflare Turnstile).
 - Sign in with ChatGPT: OpenAI requires approval for hosted apps (interest form linked in `docs/PLAN.md`).
-- Handwriting recognition and semantic search.
+- Search inside handwriting, and semantic search.
 - Live strokes while someone is drawing (sync is every few seconds; a Durable Object with WebSockets would make it live).

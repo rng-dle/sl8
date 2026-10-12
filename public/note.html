@@ -316,6 +316,7 @@
   </div>
   <nav>
     <button type="button" id="share-open">Share…</button>
+    <button type="button" id="history-open">History…</button>
     <button type="button" id="portal-add">Add a portal…</button>
     <button type="button" id="tour-start">Show me around</button>
     <a href="/canvases">All canvases</a>
@@ -348,6 +349,7 @@
     </div>
   </div>
   <button class="btn primary" type="button" id="sh-create">Create link</button>
+  <p class="notice" id="sh-verify" hidden><span></span> <button class="btn quiet" type="button" id="sh-resend">Send the link again</button></p>
   <div class="row" id="sh-new" hidden>
     <input id="sh-link" class="title-input" style="flex:1;box-shadow:none;border:1px solid var(--line);font:14px var(--font-ui)" readonly aria-label="New link">
     <button class="btn" type="button" id="sh-copy">Copy</button>
@@ -356,6 +358,11 @@
     <p id="sh-none" class="sub" style="margin:0;font-size:13px;color:var(--muted)">None yet. Anyone with a link can open it without an account.</p>
     <ul class="share-list" id="sh-list"></ul>
   </div>
+</div>
+<div id="history-menu" class="menu" hidden role="dialog" aria-label="Canvas history">
+  <h3>History</h3>
+  <p class="sub" style="margin:0;font-size:13px;color:var(--muted)">Every change from the last 30 days, yours and anyone's with a link. Going back is a change too, so you can undo it here.</p>
+  <ul class="share-list" id="hist-list"></ul>
 </div>
 <div id="picker" class="tour" hidden role="dialog" aria-label="Choose squares to share">
   <p class="tour-text">Tap or drag across the squares to share. Zoom first to change their size.</p>

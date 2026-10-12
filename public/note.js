@@ -1732,9 +1732,17 @@ async function createShare(area) {
     const { share: s } = await api(`${notePath}/shares`, { method: 'POST', body: { mode: $('input[name=sh-mode]:checked').value, area } });
     await openShare(s);
     copyLink(shareUrl(s.token));
-  } catch (e) { toast(e.message); }
+  } catch (e) {
+    if (e.kind !== 'verify') return toast(e.message);
+    await openShare();
+    $('#sh-verify span').textContent = e.message; // sharing needs a confirmed email
+    $('#sh-verify').hidden = false;
+  }
 }
-$('#share-open').onclick = () => openShare();
+$('#sh-resend').onclick = async () => {
+  try { await api('/api/verify/resend', { method: 'POST' }); toast('Sent. Open the link in the email, then share again.'); } catch (e) { toast(e.message); }
+};
+$('#share-open').onclick = () => { $('#sh-verify').hidden = true; openShare(); };
 $('#sh-create').onclick = () => {
   if ($('input[name=sh-area]:checked').value === '*') return createShare('*');
   $('#share-menu').hidden = true;
@@ -1744,8 +1752,44 @@ $('#sh-copy').onclick = () => copyLink($('#sh-link').value);
 $('#pick-cancel').onclick = endPicking;
 $('#pick-done').onclick = () => { const cells = [...picking.cells]; endPicking(); createShare(cells); };
 addEventListener('pointerdown', (e) => {
-  if (!$('#share-menu').hidden && !e.target.closest?.('#share-menu, #menu')) $('#share-menu').hidden = true;
+  for (const id of ['#share-menu', '#history-menu']) if (!$(id).hidden && !e.target.closest?.(`${id}, #menu`)) $(id).hidden = true;
 }, true);
+
+/* ---------- history: go back to how the canvas was before any change in the last 30 days ---------- */
+const whenFmt = new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+let undoRestore = null; // { to, label } after going back, so it can be undone in one tap
+async function openHistory() {
+  closeMenu();
+  $('#history-menu').hidden = false;
+  try {
+    const { points } = await api(`${notePath}/history`);
+    const row = (text, label, fn) => {
+      const li = document.createElement('li'), what = document.createElement('span'), b = document.createElement('button');
+      what.textContent = text;
+      Object.assign(b, { type: 'button', className: 'btn quiet', textContent: label, onclick: fn });
+      li.append(what, b);
+      return li;
+    };
+    $('#hist-list').replaceChildren(
+      ...(undoRestore ? [row(`Went back to before ${undoRestore.label}`, 'Undo', () => restore(undoRestore.to, null))] : []),
+      ...points.map((p) => row(`${whenFmt.format(p.at)} · ${p.n} change${p.n === 1 ? '' : 's'}`, 'Go back to before this', () => restore(p.at - 1, whenFmt.format(p.at)))));
+    if (!points.length) $('#hist-list').textContent = 'No changes yet.';
+  } catch (e) { toast(e.message); }
+}
+async function restore(to, label) {
+  clearTimeout(saveTimer);
+  await flush();
+  if (pending.size) return toast('Your latest changes are still saving. Try again in a moment.');
+  try {
+    const { undo } = await api(`${notePath}/restore`, { method: 'POST', body: { at: to } });
+    await resync();
+    undoStack = []; redoStack = []; updateUndo(); // they describe the canvas before going back
+    undoRestore = label ? { to: undo, label } : null;
+    toast(label ? `Back to how it was before ${label}. Undo is at the top of History.` : 'Undone.');
+    openHistory();
+  } catch (e) { toast(e.message); }
+}
+$('#history-open').onclick = openHistory;
 // the squares a link can edit, in view when it first opens on this device
 function fitCells(cells) {
   const b = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };

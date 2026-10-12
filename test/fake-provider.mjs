@@ -1,5 +1,6 @@
 // Local stand-in for OpenRouter / OpenAI / Anthropic / Gemini and Resend, used only by tests via TEST_BASE.
 // Keys steer behaviour: "...revoked..." -> 401, "...broke..." -> 402, "...bad..." -> rejected at connect.
+// A model id containing "text-only" refuses images. Turnstile: the token "pass" passes.
 import { createServer } from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
 
@@ -12,6 +13,8 @@ const b64url = (b) => b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_
 const keyOf = (req) => (req.headers.authorization || '').replace(/^Bearer /, '') || req.headers['x-api-key'] || '';
 const send = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
 const readBody = (req) => new Promise((r) => { let s = ''; req.on('data', (c) => (s += c)); req.on('end', () => r(s ? JSON.parse(s) : {})); });
+const partsOf = (content) => (Array.isArray(content) ? content : [{ type: 'text', text: content }]);
+const hasImage = (content) => partsOf(content).some((c) => c.type === 'image' || c.type === 'image_url');
 
 const MODELS = {
   openrouter: [{ id: 'meta-llama/llama-test:free', name: 'Llama test (free)', created: 2 }, { id: 'openai/gpt-test', name: 'GPT test', created: 1 }],
@@ -45,6 +48,7 @@ createServer(async (req, res) => {
     if (!expected || b64url(createHash('sha256').update(code_verifier || '').digest()) !== expected) return send(res, 403, { error: { message: 'Invalid code or verifier' } });
     return send(res, 200, { key: 'sk-or-v1-oauth-' + randomUUID().slice(0, 8) });
   }
+  if (url.pathname === '/turnstile/siteverify' || url.pathname === '/turnstile') return send(res, 200, { success: (await readBody(req)).response === 'pass' });
   if (url.pathname === '/__revoke') { revokedKeys.add((await readBody(req)).key); return send(res, 200, {}); }
   // stand-in for Resend: keep emails so tests can read the reset link
   if (url.pathname === '/resend/emails' && req.method === 'POST') { const m = await readBody(req); m.at = Date.now(); emails.push(m); return send(res, 200, { id: randomUUID() }); }
@@ -59,7 +63,8 @@ createServer(async (req, res) => {
     if (key.includes('broke')) return send(res, 402, { error: { message: 'Insufficient credits' } });
     const anthropic = path === '/messages';
     const userMsg = body.messages.at(-1).content;
-    const text = answerFrom(userMsg);
+    if (hasImage(userMsg) && /text-only/.test(body.model)) return send(res, 404, { error: { message: 'No endpoints found that support image input' } });
+    const text = answerFrom(partsOf(userMsg).find((c) => c.type === 'text').text) + (hasImage(userMsg) ? ' I can also see your handwriting [ink].' : '');
     res.writeHead(200, { 'content-type': 'text/event-stream' });
     res.write(': processing\n\n');
     for (const word of text.split(/(?<= )/)) {

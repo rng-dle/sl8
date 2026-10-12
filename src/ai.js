@@ -14,6 +14,13 @@ const SCOPE_LABEL = { selection: 'selected items', canvas: 'this canvas', all: '
 const ACTIONS = ['ask', 'summarize', 'plan', 'develop'];
 const DAILY_CAP = 200; // ponytail: flat per-user cap; make it per-plan if ThinkSL8 ever pays for inference
 const CONTEXT_CHARS = 16000;
+const MAX_INK = 3_000_000, INK = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/]+=*$/;
+// a user message with the handwriting image, in each API's shape
+function withImage(p, text, ink) {
+  if (PROVIDERS[p].style !== 'anthropic') return [{ type: 'text', text }, { type: 'image_url', image_url: { url: ink } }];
+  const [, type, data] = ink.match(/^data:(image\/\w+);base64,(.*)$/);
+  return [{ type: 'image', source: { type: 'base64', media_type: type, data } }, { type: 'text', text }];
+}
 const SNIPPET_CHARS = 1500;
 
 const json = (data, status = 200, headers = {}) =>
@@ -187,9 +194,8 @@ async function retrieve(env, userId, { scope, noteId, itemIds, question }) {
   const { results: recent } = await env.DB.prepare(
     `SELECT ${COLS} FROM items i JOIN notes n ON n.id = i.note_id WHERE n.user_id = ? ${where} AND ${IS_TEXT} ORDER BY i.updated_at DESC LIMIT 200`
   ).bind(...args).all();
-  const size = recent.reduce((s, r) => s + String(r.text || '').length, 0);
-  if (recent.length < 200 && size <= CONTEXT_CHARS) return fit(recent); // the whole scope fits: send all of it
-  // ponytail: keyword search (FTS5 + bm25), topped up with recent edits; add embeddings when paraphrases get missed
+  // keyword matches first (FTS5 + bm25), then recent edits until the context is full
+  // ponytail: keyword search; add embeddings when paraphrases get missed
   const m = ftsQuery(question);
   const hits = m ? (await env.DB.prepare(
     `SELECT ${COLS} FROM items_fts JOIN items i ON i.rowid = items_fts.rowid JOIN notes n ON n.id = i.note_id
@@ -213,13 +219,15 @@ const INSTRUCTIONS = {
   develop: 'Develop the idea in these notes: strengthen it, add angles and next steps the user may not have considered, and point out weak spots.',
 };
 
-function buildPrompt(sources, { scope, action, question, tz }) {
+function buildPrompt(sources, { scope, action, question, tz, ink }) {
   const fmt = dateFmt(tz);
   const system = [
     `You are the AI inside ThinkSL8, the user's personal thinking canvas. Today is ${fmt.format(new Date())}.`,
     `Below are the user's own notes from ${SCOPE_LABEL[scope]}, numbered, each with its canvas and the date it was last edited.`,
     'Ground your answer in these notes and cite them inline like [2]. If the notes don\'t contain what is asked, say so plainly and don\'t invent their content. You may add general knowledge when it helps, but label it as such.',
-    'Only typed text is shown to you; handwriting and drawings on the canvas are not.',
+    ink
+      ? `The attached image shows the handwriting and drawings in ${scope === 'all' ? 'the canvas the user has open' : SCOPE_LABEL[scope]}. Read it as part of the notes and cite it as [ink].`
+      : 'Only typed text is shown to you; handwriting and drawings on the canvas are not.',
     'Write plainly and concisely. Use short lists when they help. No preamble.',
   ].join('\n');
   const notes = sources.length
@@ -374,8 +382,13 @@ export async function aiRoutes(req, env, ctx, url, user, body) {
     ).bind(user.id, day).first('n');
     if (used > DAILY_CAP) return fail(429, `You've used today's ${DAILY_CAP} AI requests. The limit resets at midnight UTC.`, { kind: 'cap' });
 
+    // handwriting and drawings in scope, drawn by the browser into one image
+    const ink = typeof body.ink === 'string' && body.ink.length <= MAX_INK && INK.test(body.ink) ? body.ink : null;
     const sources = await retrieve(env, user.id, { scope, noteId, itemIds, question });
-    const { system, user: content } = buildPrompt(sources, { scope, action, question, tz: body.tz });
+    const prompt = (withInk) => {
+      const { system, user: text } = buildPrompt(sources, { scope, action, question, tz: body.tz, ink: withInk });
+      return { system, messages: [...history, { role: 'user', content: withInk ? withImage(conn.provider, text, ink) : text }] };
+    };
     const apiKey = await key();
 
     const { readable, writable } = new TransformStream();
@@ -387,7 +400,16 @@ export async function aiRoutes(req, env, ctx, url, user, body) {
           t: 'sources', provider: PROVIDERS[conn.provider].label, model: conn.model,
           sources: sources.map((s, i) => ({ n: i + 1, id: s.id, noteId: s.noteId, title: s.title, updated: s.updated, excerpt: s.text.slice(0, 160) })),
         });
-        for await (const text of streamChat(env, conn.provider, apiKey, conn.model, system, [...history, { role: 'user', content }])) await send({ t: 'delta', text });
+        let p = prompt(!!ink), started = false;
+        try {
+          for await (const text of streamChat(env, conn.provider, apiKey, conn.model, p.system, p.messages)) { started = true; await send({ t: 'delta', text }); }
+        } catch (e) {
+          // a model that can't take images: answer from the typed notes and say what was left out
+          if (!ink || started || !(e instanceof ProviderError) || !['model', 'provider'].includes(e.kind)) throw e;
+          await send({ t: 'note', text: `${conn.model} can't read images, so your handwriting was left out. To include it, choose a model that accepts images in Settings → AI.` });
+          p = prompt(false);
+          for await (const text of streamChat(env, conn.provider, apiKey, conn.model, p.system, p.messages)) await send({ t: 'delta', text });
+        }
         await send({ t: 'done' });
       } catch (e) {
         if (e.kind === 'auth') await markReconnect(env, user.id);

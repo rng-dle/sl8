@@ -29,6 +29,7 @@ class Client {
       sources: lines.find((l) => l.t === 'sources')?.sources || [],
       text: lines.filter((l) => l.t === 'delta').map((l) => l.text).join(''),
       error: lines.find((l) => l.t === 'error'),
+      note: lines.find((l) => l.t === 'note')?.text,
       done: lines.some((l) => l.t === 'done'),
     };
   }
@@ -74,6 +75,17 @@ ok(stored.length >= 1 && stored.every((s) => !s.secret.includes('secretvalue')),
 let ans = await a.ask({ scope: 'canvas', noteId: note.id, question: 'What did I write about pricing?' });
 ok(ans.done && ans.text.includes('$12 per month'), 'answer is grounded in the saved canvas text', JSON.stringify(ans));
 ok(ans.sources.some((s) => s.id === 'p1' && s.title === 'Launch'), 'sources point back to the notes used');
+
+// handwriting goes as a picture; a text-only model answers without it and says so
+const INK = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+ans = await a.ask({ scope: 'canvas', noteId: note.id, question: 'What did I write about pricing?', ink: INK });
+ok(ans.done && /handwriting \[ink\]/.test(ans.text) && !ans.note, 'handwriting reaches a model that reads images', JSON.stringify(ans));
+await a.json('/api/ai', { method: 'PATCH', body: { model: 'gpt-text-only' } });
+ans = await a.ask({ scope: 'canvas', noteId: note.id, question: 'What did I write about pricing?', ink: INK });
+ok(ans.done && ans.text.includes('$12') && !/handwriting/.test(ans.text) && /can't read images/.test(ans.note), 'a text-only model still answers and says handwriting was left out', JSON.stringify(ans));
+ans = await a.ask({ scope: 'canvas', noteId: note.id, question: 'pricing?', ink: 'data:text/html;base64,PHNjcmlwdD4=' });
+ok(ans.done && !ans.note, 'anything but a PNG, JPEG or WebP picture is ignored');
+await a.json('/api/ai', { method: 'PATCH', body: { model: 'gpt-test' } });
 
 ans = await a.ask({ scope: 'all', question: 'pricing?' });
 ok(ans.status === 403 && ans.kind === 'scope', 'reading all canvases is refused until allowed');

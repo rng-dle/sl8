@@ -1,6 +1,6 @@
 // ThinkSL8 API: email/password accounts, per-user canvases (stored as "notes"), each a set of items, plus AI (src/ai.js).
 import { aiRoutes } from './ai.js';
-import { canSendMail, sendMail, resetEmail } from './mail.js';
+import { canSendMail, sendMail, resetEmail, verifyEmail } from './mail.js';
 
 const OLD_HOSTS = new Set(['sl8.nastaliq.co']); // still served; reset links from it point at thinksl8.com
 const SESSION_DAYS = 30;
@@ -57,7 +57,7 @@ async function currentUser(req, env) {
   const token = sessionToken(req);
   if (!token) return null;
   return env.DB.prepare(
-    'SELECT u.id, u.email, u.onboarded FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?'
+    'SELECT u.id, u.email, u.onboarded, u.verified FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?'
   ).bind(await sha256(token), Date.now()).first();
 }
 
@@ -84,16 +84,51 @@ async function newPasswordFields(password) {
 }
 
 // Counts requests per key in a fixed window; true once the limit is passed.
+const bucketOf = (windowSec) => { const now = Math.floor(Date.now() / 1000); return now - (now % windowSec); };
 async function throttled(env, key, limit, windowSec) {
-  const now = Math.floor(Date.now() / 1000);
-  const bucket = now - (now % windowSec);
   const n = await env.DB.prepare(
     'INSERT INTO throttle (key, bucket, n) VALUES (?, ?, 1) ON CONFLICT (key, bucket) DO UPDATE SET n = n + 1 RETURNING n'
-  ).bind(key, bucket).first('n');
-  if (Math.random() < 0.02) await env.DB.prepare('DELETE FROM throttle WHERE bucket < ?').bind(now - 86400).run();
+  ).bind(key, bucketOf(windowSec)).first('n');
+  if (Math.random() < 0.02) await env.DB.prepare('DELETE FROM throttle WHERE bucket < ?').bind(bucketOf(1) - 86400).run();
   return n > limit;
 }
 const clientIp = (req) => req.headers.get('cf-connecting-ip') || 'local';
+
+// Wrong passwords count per account *and* network, so nobody can lock someone else out by guessing at their email.
+const LOGIN_FAILS = 10, LOGIN_WINDOW = 900;
+const failKey = (req, email) => `loginfail:${email}:${clientIp(req)}`;
+const failures = async (env, key) =>
+  (await env.DB.prepare('SELECT n FROM throttle WHERE key = ? AND bucket = ?').bind(key, bucketOf(LOGIN_WINDOW)).first('n')) || 0;
+
+// Cloudflare Turnstile, a bot check, on sign-up, sign-in and reset requests once both keys are set.
+const botCheckOn = (env) => !!(env.TURNSTILE_SITE_KEY && env.TURNSTILE_SECRET);
+async function human(env, req, token) {
+  if (!botCheckOn(env)) return true;
+  if (typeof token !== 'string' || !token || token.length > 2048) return false;
+  const url = env.TEST_BASE ? `${env.TEST_BASE}/turnstile` : 'https://challenges.cloudflare.com/turnstile/v0/siteverify';
+  try {
+    const res = await fetch(url, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ secret: env.TURNSTILE_SECRET, response: token, remoteip: clientIp(req) }),
+    });
+    return (await res.json()).success === true;
+  } catch {
+    return false; // fail closed: a bot check that can't be checked doesn't pass
+  }
+}
+const NOT_HUMAN = "The check that you're not a bot didn't pass. Try again.";
+
+// Email verification: a link that proves the address is yours. Sharing needs it.
+async function sendVerify(env, ctx, url, user) {
+  const token = hex(crypto.getRandomValues(new Uint8Array(32)));
+  const now = Date.now();
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM verifies WHERE expires_at < ?').bind(now),
+    env.DB.prepare('INSERT INTO verifies VALUES (?, ?, ?)').bind(await sha256(token), user.id, now + 7 * 864e5),
+  ]);
+  const origin = OLD_HOSTS.has(url.hostname) ? 'https://thinksl8.com' : url.origin;
+  ctx.waitUntil(sendMail(env, { to: user.email, ...verifyEmail(`${origin}/verify?token=${token}`) }).catch((e) => console.error('verify email failed', e)));
+}
 
 // FTS5 query from what someone typed: every word must appear, matching word starts.
 function searchQuery(q) {
@@ -137,7 +172,8 @@ function shown(area, byId, it) {
   const placed = (x) => x && x.kind !== 'conn' && inArea(area, anchor(x));
   return it.kind === 'conn' ? placed(byId.get(it.a)) && placed(byId.get(it.b)) : placed(it);
 }
-const TOMB_DAYS = 1; // a device away longer than this reloads the whole canvas instead of catching up
+const TOMB_DAYS = 1, HISTORY_DAYS = 30;
+const DB_NOW = "CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)"; // the clock item_history's triggers use // a device away longer than this reloads the whole canvas instead of catching up
 
 // A canvas's look. Unknown keys and bad values are dropped.
 const THEMES = ['light', 'dark', 'paper', 'blueprint', 'chalk'];
@@ -319,6 +355,8 @@ async function saveOps(env, noteId, list, share) {
     ).bind(noteId, now, ids));
     if (Math.random() < 0.02) stmts.push(env.DB.prepare('DELETE FROM tombstones WHERE at < ?').bind(now - 2 * TOMB_DAYS * 864e5));
   }
+  // ponytail: history keeps every previous version for 30 days; thin out old versions if storage grows
+  if (Math.random() < 0.02) stmts.push(env.DB.prepare('DELETE FROM item_history WHERE note_id = ? AND at < ?').bind(noteId, now - HISTORY_DAYS * 864e5));
   stmts.push(env.DB.prepare('UPDATE notes SET updated_at = ? WHERE id = ?').bind(now, noteId));
   await env.DB.batch(stmts);
   return json(rejected.length ? { ok: true, rejected } : { ok: true });
@@ -384,10 +422,13 @@ async function api(req, env, ctx, url) {
   }
   const body = method === 'GET' || path === '/api/files' ? {} : await req.json().catch(() => ({}));
 
+  if (path === '/api/config' && method === 'GET') return json({ botCheck: botCheckOn(env) ? env.TURNSTILE_SITE_KEY : null });
+
   if (path === '/api/signup' && method === 'POST') {
     const c = credentials(body);
     if (c.error) return fail(400, c.error);
     if (await throttled(env, 'signup:' + clientIp(req), 10, 3600)) return fail(429, 'Too many new accounts from this network. Try again in an hour.');
+    if (!(await human(env, req, body.turnstile))) return fail(400, NOT_HUMAN);
     const id = crypto.randomUUID();
     const [hash, salt] = await newPasswordFields(c.password);
     try {
@@ -397,6 +438,7 @@ async function api(req, env, ctx, url) {
       if (String(e.message).includes('UNIQUE')) return fail(409, 'That email already has an account. Log in instead.');
       throw e;
     }
+    if (canSendMail(env)) await sendVerify(env, ctx, url, { id, email: c.email });
     return startSession(env, id, c.email);
   }
 
@@ -404,19 +446,14 @@ async function api(req, env, ctx, url) {
     const c = credentials(body);
     if (c.error) return fail(400, 'Wrong email or password.');
     if (await throttled(env, 'login:' + clientIp(req), 30, 600)) return fail(429, 'Too many sign-in attempts from this network. Try again in 10 minutes.');
+    const fk = failKey(req, c.email);
+    if (await failures(env, fk) >= LOGIN_FAILS) return fail(429, 'Too many wrong passwords from this network. Try again in 15 minutes, or reset your password.');
+    if (!(await human(env, req, body.turnstile))) return fail(400, NOT_HUMAN);
     const u = await env.DB.prepare('SELECT * FROM users WHERE email = ?').bind(c.email).first();
-    const now = Date.now();
-    if (u && u.locked_until > now) return fail(429, 'Too many wrong attempts. Try again in 15 minutes, or reset your password.');
-    const ok = await passwordMatches(u, c.password);
-    if (!ok) {
-      if (u) {
-        const fails = u.fails + 1;
-        await env.DB.prepare('UPDATE users SET fails = ?, locked_until = ? WHERE id = ?')
-          .bind(fails >= 10 ? 0 : fails, fails >= 10 ? now + 15 * 60e3 : 0, u.id).run();
-      }
+    if (!(await passwordMatches(u, c.password))) {
+      await throttled(env, fk, LOGIN_FAILS, LOGIN_WINDOW);
       return fail(401, 'Wrong email or password.');
     }
-    if (u.fails) await env.DB.prepare('UPDATE users SET fails = 0 WHERE id = ?').bind(u.id).run();
     return startSession(env, u.id, u.email);
   }
 
@@ -431,6 +468,7 @@ async function api(req, env, ctx, url) {
     const email = cleanEmail(body.email);
     if (!okEmail(email)) return fail(400, 'Enter a valid email address.');
     if (await throttled(env, 'forgot:' + clientIp(req), 5, 600)) return fail(429, 'Too many reset requests from this network. Try again in 10 minutes.');
+    if (!(await human(env, req, body.turnstile))) return fail(400, NOT_HUMAN);
     const sent = json({ ok: true }); // identical reply whether or not the account exists
     if (await throttled(env, 'forgot:' + email, 3, 3600)) return sent;
     const u = await env.DB.prepare('SELECT id FROM users WHERE email = ?').bind(email).first();
@@ -455,11 +493,22 @@ async function api(req, env, ctx, url) {
     if (!row) return fail(400, 'This reset link has expired or was already used. Ask for a new one.');
     const [hash, salt] = await newPasswordFields(body.password);
     await env.DB.batch([
-      env.DB.prepare('UPDATE users SET pw_hash = ?, pw_salt = ?, fails = 0, locked_until = 0 WHERE id = ?').bind(hash, salt, row.id),
+      env.DB.prepare('UPDATE users SET pw_hash = ?, pw_salt = ?, verified = 1 WHERE id = ?').bind(hash, salt, row.id), // the link proved the mailbox
       env.DB.prepare('DELETE FROM resets WHERE user_id = ?').bind(row.id),
       env.DB.prepare('DELETE FROM sessions WHERE user_id = ?').bind(row.id), // sign out everywhere, then sign in here
     ]);
     return startSession(env, row.id, row.email);
+  }
+
+  if (path === '/api/verify' && method === 'POST') {
+    const token = typeof body.token === 'string' && /^[a-f0-9]{64}$/.test(body.token) ? body.token : '';
+    const row = token && await env.DB.prepare('SELECT user_id FROM verifies WHERE token_hash = ? AND expires_at > ?').bind(await sha256(token), Date.now()).first();
+    if (!row) return fail(400, 'This link has expired or was already used. Send a new one from Share in any canvas.');
+    await env.DB.batch([
+      env.DB.prepare('UPDATE users SET verified = 1 WHERE id = ?').bind(row.user_id),
+      env.DB.prepare('DELETE FROM verifies WHERE user_id = ?').bind(row.user_id),
+    ]);
+    return json({ ok: true });
   }
 
   const sh = path.match(/^\/api\/shared\/([a-f0-9]{64})(?:(\/ops)|\/files\/([0-9a-f-]{36}))?$/);
@@ -493,8 +542,8 @@ async function api(req, env, ctx, url) {
     const mine = 'SELECT id FROM notes WHERE user_id = ?';
     await env.DB.batch([
       env.DB.prepare(`DELETE FROM items WHERE note_id IN (${mine})`).bind(user.id),
-      ...['canvas_style', 'shares', 'tombstones'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE note_id IN (${mine})`).bind(user.id)),
-      ...['notes', 'ai_connections', 'ai_usage', 'resets', 'sessions'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(user.id)),
+      ...['canvas_style', 'shares', 'tombstones', 'item_history'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE note_id IN (${mine})`).bind(user.id)),
+      ...['notes', 'ai_connections', 'ai_usage', 'resets', 'verifies', 'sessions'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(user.id)),
       env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id),
     ]);
     ctx.waitUntil(deleteFiles(env, user.id).catch((e) => console.error('file cleanup failed', e)));
@@ -560,7 +609,14 @@ async function api(req, env, ctx, url) {
 
   if (path === '/api/me' && method === 'GET') {
     const last = await env.DB.prepare('SELECT id FROM notes WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1').bind(user.id).first('id');
-    return json({ email: user.email, onboarded: !!user.onboarded, lastNoteId: last || null });
+    return json({ email: user.email, onboarded: !!user.onboarded, verified: !!user.verified, lastNoteId: last || null });
+  }
+  if (path === '/api/verify/resend' && method === 'POST') {
+    if (user.verified) return json({ ok: true });
+    if (!canSendMail(env)) return fail(503, "Email isn't set up on this server yet, so verification links can't be sent.");
+    if (await throttled(env, 'verify:' + user.id, 3, 3600)) return fail(429, 'Three links were sent in the last hour. Check spam, or try again later.');
+    await sendVerify(env, ctx, url, user);
+    return json({ ok: true });
   }
   if (path === '/api/me/onboarded' && method === 'POST') {
     await env.DB.prepare('UPDATE users SET onboarded = 1 WHERE id = ?').bind(user.id).run();
@@ -594,14 +650,42 @@ async function api(req, env, ctx, url) {
     }
   }
 
-  const m = path.match(/^\/api\/notes\/([\w-]{1,64})(?:(\/ops)|(\/shares)(?:\/([a-f0-9]{64}))?)?$/);
+  const m = path.match(/^\/api\/notes\/([\w-]{1,64})(?:(\/ops)|(\/shares)(?:\/([a-f0-9]{64}))?|\/(history|restore))?$/);
   if (m) {
-    const [, noteId, ops, shares, token] = m;
+    const [, noteId, ops, shares, token, past] = m;
     const note = await env.DB.prepare('SELECT id, title, updated_at FROM notes WHERE id = ? AND user_id = ?')
       .bind(noteId, user.id).first();
     if (!note) return fail(404, 'Note not found.');
 
     if (ops && method === 'POST') return saveOps(env, noteId, body.ops);
+
+    // History: when things changed, newest first (by the minute for the last hour, then by the hour for a day, then by
+    // the day), and going back to just before any of those points.
+    if (past === 'history' && method === 'GET') {
+      const now = Date.now();
+      const { results } = await env.DB.prepare(
+        `SELECT min(at) AS at, count(*) AS n FROM item_history WHERE note_id = ?
+         GROUP BY CASE WHEN at > ?2 THEN at / 60000 WHEN at > ?3 THEN 1e9 + at / 3600000 ELSE 2e9 + at / 86400000 END ORDER BY at DESC LIMIT 150`
+      ).bind(noteId, now - 3600e3, now - 864e5).all();
+      return json({ points: results });
+    }
+    if (past === 'restore' && method === 'POST') {
+      const to = Number(body.at);
+      if (!Number.isFinite(to) || to <= 0) return fail(400, 'Choose a point in the history.');
+      // each item changed after `to` goes back to its earliest recorded version after it (NULL: it didn't exist yet)
+      const first = `SELECT h.id, h.data FROM item_history h WHERE h.note_id = ?1 AND h.at > ?2
+        AND h.rowid = (SELECT min(rowid) FROM item_history WHERE note_id = ?1 AND id = h.id AND at > ?2)`;
+      const now = Date.now();
+      const [clock] = await env.DB.batch([
+        env.DB.prepare(`SELECT ${DB_NOW} AS now`), // the history's clock just before going back, so it can be undone
+        env.DB.prepare(`INSERT INTO tombstones (note_id, id, at) SELECT ?1, id, ?3 FROM (${first}) WHERE data IS NULL ON CONFLICT (note_id, id) DO UPDATE SET at = excluded.at`).bind(noteId, to, now),
+        env.DB.prepare(`DELETE FROM items WHERE note_id = ?1 AND id IN (SELECT id FROM (${first}) WHERE data IS NULL)`).bind(noteId, to),
+        env.DB.prepare(`INSERT INTO items (note_id, id, t, data, updated_at) SELECT ?1, id, json_extract(data, '$.t'), data, ?3 FROM (${first}) WHERE data IS NOT NULL
+          ON CONFLICT (note_id, id) DO UPDATE SET t = excluded.t, data = excluded.data, updated_at = excluded.updated_at`).bind(noteId, to, now),
+        env.DB.prepare('UPDATE notes SET updated_at = ? WHERE id = ?').bind(now, noteId),
+      ]);
+      return json({ ok: true, undo: clock.results[0].now - 1 }); // - 1: the restore's own changes can share that millisecond
+    }
 
     if (shares) {
       if (token && method === 'DELETE') {
@@ -613,6 +697,7 @@ async function api(req, env, ctx, url) {
         return json({ shares: results.map((s) => ({ ...s, area: s.area === '*' ? '*' : JSON.parse(s.area) })) });
       }
       if (!token && method === 'POST') {
+        if (!user.verified) return json({ error: `Verify your email first: open the link we sent to ${user.email}.`, kind: 'verify' }, 403);
         const area = cleanArea(body.area);
         if (!area) return fail(400, `Choose the whole canvas or between 1 and ${MAX_AREA} squares.`);
         if (body.mode !== 'read' && body.mode !== 'write') return fail(400, 'Choose view or edit.');
@@ -655,6 +740,7 @@ async function api(req, env, ctx, url) {
       await env.DB.batch([
         ...['canvas_style', 'shares', 'tombstones'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE note_id = ?`).bind(noteId)),
         env.DB.prepare('DELETE FROM items WHERE note_id = ?').bind(noteId),
+        env.DB.prepare('DELETE FROM item_history WHERE note_id = ?').bind(noteId), // after items: deleting them records history
         env.DB.prepare('DELETE FROM notes WHERE id = ?').bind(noteId),
       ]);
       return json({ ok: true });
