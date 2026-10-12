@@ -1194,7 +1194,7 @@ function onMove(e) {
     if (t.length < 2) return;
     const [a, b] = t;
     const { cam0, d0, mx, my } = gesture;
-    const z = Math.min(8, Math.max(0.1, cam0.z * Math.hypot(a.x - b.x, a.y - b.y) / d0));
+    const z = Math.min(16, Math.max(0.05, cam0.z * Math.hypot(a.x - b.x, a.y - b.y) / d0));
     const wx = (mx - cam0.x) / cam0.z, wy = (my - cam0.y) / cam0.z;
     const nx = (a.x + b.x) / 2, ny = (a.y + b.y) / 2;
     cam = { x: nx - wx * z, y: ny - wy * z, z };
