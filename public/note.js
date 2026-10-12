@@ -973,7 +973,7 @@ function onDown(e) {
 
   const fingerPans = e.pointerType === 'touch' && !fingerDraws() && !picking;
   if (spaceDown || (tool.name === 'hand' && !picking) || e.button === 1 || fingerPans) {
-    gesture = { kind: 'pan', id: e.pointerId, lx: e.clientX, ly: e.clientY };
+    gesture = { kind: 'pan', id: e.pointerId, lx: e.clientX, ly: e.clientY, sx: e.clientX, sy: e.clientY, wasEditing };
     document.body.classList.add('panning');
     return;
   }
@@ -1173,21 +1173,29 @@ function onUp(e) {
     } else if (!tap) {
       setSelection([...g.keep, ...[...items.values()].filter((it) => inRect(it, g.rect)).map((it) => it.id)]);
     }
-    // double-tap: edit the text box under the finger, or start a new one on empty space
-    const now = Date.now();
-    const dbl = tap && lastTap && now - lastTap.t < 450 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 24;
-    lastTap = tap && !dbl && !g.wasEditing ? { t: now, x: e.clientX, y: e.clientY } : null;
-    if (dbl) {
-      const [x, y] = toWorld(e.clientX, e.clientY);
-      const hit = hitItem(x, y);
-      if (hit?.kind === 'text') editText(hit.id);
-      else if (hit?.kind === 'portal') openPortal(hit.id);
-      else if (hit?.kind === 'conn') editLabel(hit.id);
-      else if (hit?.kind === 'video') toggleVideo(hit);
-      else if (!g.wasEditing) { setSelection([]); newText(x, y); }
-    }
+    doubleTap(e, tap, g.wasEditing);
     schedule(true);
+  } else if (g.kind === 'pan' && e.pointerType === 'touch' && tool.name !== 'hand') {
+    // fingers move the page once a pen is used, but a finger that didn't move is still a tap:
+    // with the text tool it starts a note, and a double-tap works with any tool
+    const tap = e.type === 'pointerup' && Math.hypot(e.clientX - g.sx, e.clientY - g.sy) < 8;
+    if (tap && tool.name === 'text' && !g.wasEditing) newText(...toWorld(e.clientX, e.clientY));
+    else doubleTap(e, tap, g.wasEditing);
   }
+}
+// double-tap: edit the text box under the finger, or start a new one on empty space
+function doubleTap(e, tap, wasEditing) {
+  const now = Date.now();
+  const dbl = tap && lastTap && now - lastTap.t < 450 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 24;
+  lastTap = tap && !dbl && !wasEditing ? { t: now, x: e.clientX, y: e.clientY } : null;
+  if (!dbl) return;
+  const [x, y] = toWorld(e.clientX, e.clientY);
+  const hit = hitItem(x, y);
+  if (hit?.kind === 'text') editText(hit.id);
+  else if (hit?.kind === 'portal') openPortal(hit.id);
+  else if (hit?.kind === 'conn') editLabel(hit.id);
+  else if (hit?.kind === 'video') toggleVideo(hit);
+  else if (!wasEditing) { setSelection([]); newText(x, y); }
 }
 
 function endErase(g) {
