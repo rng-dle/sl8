@@ -197,6 +197,78 @@ const saveStyle = (env, noteId, style) => env.DB.prepare(
   'INSERT INTO canvas_style (note_id, style) VALUES (?, ?) ON CONFLICT (note_id) DO UPDATE SET style = excluded.style'
 ).bind(noteId, JSON.stringify(style));
 
+/* The marketplace: templates (notes, drawings and arrows plus a look) and themes (a look). Anyone can browse; using one
+   copies it into your own canvases. Official items have no user_id; members publish templates from a canvas or JSON. */
+const MARKET_KINDS = ['text', 'stroke', 'conn']; // photos, videos and portals point at the author's own files and canvases
+const MAX_TEMPLATE_ITEMS = 500, MAX_TEMPLATE_BYTES = 300_000;
+const marketStyle = (v) => { const s = cleanStyle(v); delete s.image; delete s.fit; delete s.dim; return s; };
+function marketItems(list) {
+  if (!Array.isArray(list)) return [];
+  const items = list.filter((it) => validItem(it) && MARKET_KINDS.includes(it.kind));
+  const ids = new Set(items.map((it) => it.id));
+  return items.filter((it) => it.kind !== 'conn' || (ids.has(it.a) && ids.has(it.b)));
+}
+const ownNote = (env, user, id) => isId(id) ? env.DB.prepare('SELECT id FROM notes WHERE id = ? AND user_id = ?').bind(id, user.id).first() : null;
+const styleOf = async (env, noteId) => JSON.parse((await env.DB.prepare('SELECT style FROM canvas_style WHERE note_id = ?').bind(noteId).first('style')) || '{}');
+
+async function marketList(req, env) {
+  const user = await currentUser(req, env);
+  // ponytail: the newest 200 with their data, for previews; page it when the shelf grows
+  const { results } = await env.DB.prepare(
+    'SELECT id, kind, user_id, name, description, data, created_at FROM market ORDER BY user_id IS NOT NULL, kind, created_at DESC LIMIT 200'
+  ).all();
+  const items = results.map((r) => `{"id":${JSON.stringify(r.id)},"kind":${JSON.stringify(r.kind)},"name":${JSON.stringify(r.name)},"description":${JSON.stringify(r.description)},"official":${!r.user_id},"mine":${!!user && r.user_id === user.id},"created_at":${r.created_at},"data":${r.data}}`);
+  return json(`{"signedIn":${!!user},"items":[${items.join(',')}]}`);
+}
+
+async function marketPublish(env, user, body) {
+  if (!user.verified) return json({ error: `Verify your email first: open the link we sent to ${user.email}.`, kind: 'verify' }, 403);
+  const name = String(body.name ?? '').trim().slice(0, 60), description = String(body.description ?? '').trim().slice(0, 160);
+  if (!name) return fail(400, 'Give the template a name.');
+  let items, style;
+  if (body.noteId !== undefined) {
+    const note = await ownNote(env, user, body.noteId);
+    if (!note) return fail(404, 'Canvas not found.');
+    items = marketItems((await loadItems(env, note.id)).map((r) => r.it));
+    style = marketStyle(await styleOf(env, note.id));
+  } else {
+    items = marketItems(body.items);
+    style = marketStyle(body.style);
+  }
+  if (!items.length) return fail(400, 'A template needs at least one note, drawing or arrow. Photos, videos and portals are left out.');
+  if (items.length > MAX_TEMPLATE_ITEMS) return fail(413, `Templates can hold up to ${MAX_TEMPLATE_ITEMS} notes, drawings and arrows.`);
+  const data = JSON.stringify({ style, items });
+  if (data.length > MAX_TEMPLATE_BYTES) return fail(413, 'That template is too large. Try a smaller canvas.');
+  if (await throttled(env, 'publish:' + user.id, 20, 86400)) return fail(429, 'You can publish 20 templates a day. Try again tomorrow.');
+  const id = crypto.randomUUID(), now = Date.now();
+  await env.DB.prepare('INSERT INTO market (id, kind, user_id, name, description, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(id, 'template', user.id, name, description, data, now, now).run();
+  return json({ id }, 201);
+}
+
+// Using a template makes a new canvas holding a copy (fresh ids, arrows re-pointed). A theme restyles one of your
+// canvases, keeping its background photo, or starts a new canvas with that look.
+async function marketUse(env, user, row, body) {
+  const { style, items = [] } = JSON.parse(row.data);
+  if (row.kind === 'theme' && body.noteId !== undefined) {
+    const note = await ownNote(env, user, body.noteId);
+    if (!note) return fail(404, 'Canvas not found.');
+    const old = await styleOf(env, note.id);
+    await saveStyle(env, note.id, cleanStyle({ image: old.image, fit: old.fit, dim: old.dim, ...style })).run();
+    return json({ noteId: note.id });
+  }
+  const id = crypto.randomUUID(), now = Date.now();
+  const fresh = new Map(items.map((it) => [it.id, crypto.randomUUID()]));
+  const copies = items.map((it, i) => ({ ...it, id: fresh.get(it.id), t: now + i, ...(it.kind === 'conn' && { a: fresh.get(it.a), b: fresh.get(it.b) }) }));
+  const stmts = [env.DB.prepare('INSERT INTO notes VALUES (?, ?, ?, ?, ?)').bind(id, user.id, row.kind === 'theme' ? 'Untitled' : row.name, now, now)];
+  if (Object.keys(style).length) stmts.push(saveStyle(env, id, style));
+  if (copies.length) stmts.push(env.DB.prepare( // one statement for any size, under D1's per-request query limit
+    "INSERT INTO items (note_id, id, t, data, updated_at) SELECT ?, json_extract(value, '$.id'), json_extract(value, '$.t'), value, ? FROM json_each(?)"
+  ).bind(id, now, JSON.stringify(copies)));
+  await env.DB.batch(stmts);
+  return json({ noteId: id }, 201);
+}
+
 // Uploaded images: PNG, JPEG, WebP or GIF only (checked by their first bytes, never SVG), 3 MB, 100 per account.
 const IMAGE_SIGS = [['image/png', [0x89, 0x50, 0x4e, 0x47]], ['image/jpeg', [0xff, 0xd8, 0xff]], ['image/gif', [0x47, 0x49, 0x46, 0x38]], ['image/webp', [0x52, 0x49, 0x46, 0x46]]];
 const sniffImage = (b) => IMAGE_SIGS.find(([type, sig]) => sig.every((x, i) => b[i] === x) && (type !== 'image/webp' || String.fromCharCode(...b.slice(8, 12)) === 'WEBP'))?.[0];
@@ -508,6 +580,8 @@ async function api(req, env, ctx, url) {
     return json({ ok: true });
   }
 
+  if (path === '/api/market' && method === 'GET') return marketList(req, env);
+
   const sh = path.match(/^\/api\/shared\/([a-f0-9]{64})(?:(\/ops)|\/files\/([0-9a-f-]{36}))?$/);
   if (sh) return shared(req, env, url, sh[1], sh[2], sh[3], body);
 
@@ -618,6 +692,20 @@ async function api(req, env, ctx, url) {
   if (path === '/api/me/onboarded' && method === 'POST') {
     await env.DB.prepare('UPDATE users SET onboarded = 1 WHERE id = ?').bind(user.id).run();
     return json({ ok: true });
+  }
+
+  if (path === '/api/market' && method === 'POST') return marketPublish(env, user, body);
+  const mk = path.match(/^\/api\/market\/([\w-]{1,64})(\/use)?$/);
+  if (mk) {
+    const row = await env.DB.prepare('SELECT * FROM market WHERE id = ?').bind(mk[1]).first();
+    if (!row) return fail(404, 'That template or theme was taken down.');
+    if (mk[2] && method === 'POST') return marketUse(env, user, row, body);
+    if (!mk[2] && method === 'DELETE') {
+      if (row.user_id !== user.id) return fail(403, 'You can only take down what you published.');
+      await env.DB.prepare('DELETE FROM market WHERE id = ?').bind(row.id).run();
+      return json({ ok: true });
+    }
+    return fail(404, 'Not found.');
   }
 
   if (path.startsWith('/api/ai')) return aiRoutes(req, env, ctx, url, user, body);

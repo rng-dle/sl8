@@ -1,5 +1,5 @@
 /* ThinkSL8: lapis ink on cool slate paper. Full-bleed canvas, tools float at the thumb's reach. */
-:root {
+:root, .theme-light {
   --warn: #8a5a00;
   --warn-soft: #fff4d6;
   --paper: #f7f8fb;
@@ -51,7 +51,7 @@
     color-scheme: dark;
   }
 }
-:root[data-theme="dark"] {
+:root[data-theme="dark"], .theme-dark {
   --paper: #12141c; --surface: #1b1e29; --line: #2b2f40; --dot: #2f3448; --text: #e9ebf3; --muted: #979db2;
   --accent: #78d1f9; --accent-soft: #163a52; --on-accent: #06223a; --brand: #78d1f9; --danger: #ff8a85;
   --ink-ink: #eef0f7; --ink-blue: #8197ff; --ink-red: #ff7d77; --ink-green: #5cd39c; --ink-yellow: #ffd84d; --ink-orange: #ffad66; --ink-purple: #c4a3ff; --ink-teal: #5fd6d0; --ink-pink: #ff8fc6; --hl-alpha: 0.32; --warn: #ffc95c; --warn-soft: #3a2f14;
@@ -59,21 +59,21 @@
   color-scheme: dark;
 }
 
-/* canvas themes, chosen per canvas */
-:root[data-theme="paper"] {
+/* canvas themes, chosen per canvas; the .theme-* classes scope one to an element (marketplace previews) */
+:root[data-theme="paper"], .theme-paper {
   --paper: #f3eee3; --surface: #fbf8f1; --line: #e2d9c6; --dot: #cdbf9f; --text: #2b2620; --muted: #6f6656;
   --accent: #1f5c8a; --accent-soft: #dde8f1; --on-accent: #ffffff; --brand: #0a2b48; --danger: #a8352b; --warn: #7a5200; --warn-soft: #f6e7c4;
   --ink-ink: #2b2620; --ink-blue: #1f4f99; --ink-red: #b03a2e; --ink-green: #2f6b3a; --ink-yellow: #e2b100; --ink-orange: #c25a14; --ink-purple: #6a3fb0; --ink-teal: #1b7c78; --ink-pink: #b8366f; --hl-alpha: 0.4;
   --shadow: 0 1px 2px rgb(60 45 20 / 0.08), 0 8px 24px rgb(60 45 20 / 0.10);
 }
-:root[data-theme="blueprint"] {
+:root[data-theme="blueprint"], .theme-blueprint {
   --paper: #0f2d4f; --surface: #14385f; --line: #2a5482; --dot: #3c6b9d; --text: #eaf3ff; --muted: #a3bfdf;
   --accent: #7fd0ff; --accent-soft: #1d4a77; --on-accent: #082340; --brand: #78d1f9; --danger: #ff9a95; --warn: #ffd27a; --warn-soft: #3b3a24;
   --ink-ink: #f3f8ff; --ink-blue: #7fd0ff; --ink-red: #ff9a95; --ink-green: #90e3b4; --ink-yellow: #ffe17a; --ink-orange: #ffb072; --ink-purple: #cdb2ff; --ink-teal: #79e6de; --ink-pink: #ff9fd0; --hl-alpha: 0.3;
   --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px rgb(0 10 30 / 0.4);
   color-scheme: dark;
 }
-:root[data-theme="chalk"] {
+:root[data-theme="chalk"], .theme-chalk {
   --paper: #1f2b25; --surface: #27362e; --line: #34473c; --dot: #44594c; --text: #eef2ea; --muted: #a9b8ad;
   --accent: #a6e3bd; --accent-soft: #2f4a3b; --on-accent: #13201a; --brand: #78d1f9; --danger: #ff9e8f; --warn: #ffd98a; --warn-soft: #3d3a25;
   --ink-ink: #f1f3ee; --ink-blue: #9cc9ff; --ink-red: #ff9e8f; --ink-green: #b2e8a8; --ink-yellow: #ffe48c; --ink-orange: #ffb57d; --ink-purple: #cfb6ff; --ink-teal: #8be3d8; --ink-pink: #ffa6d2; --hl-alpha: 0.3;

@@ -98,10 +98,13 @@ function setMode(m) {
 $('#tab-login').onclick = () => setMode('login');
 $('#tab-signup').onclick = () => setMode('signup');
 
-// Signed in: go to setup the first time, otherwise straight into the canvas you used last.
+// Signed in: go to setup the first time, then back to the page that sent you here (?next=/market), otherwise
+// straight into the canvas you used last.
 async function enter() {
   const me = await api('/api/me');
   if (!me.onboarded) return location.replace('/welcome');
+  const next = new URLSearchParams(location.search).get('next') || '';
+  if (/^\/[a-z]+$/.test(next)) return location.replace(next); // a page on this site only
   const id = me.lastNoteId || (await api('/api/notes', { method: 'POST', body: { title: 'Untitled' } })).note.id;
   try { sessionStorage.setItem('sl8:reveal', '1'); } catch {}
   location.replace('/note?id=' + encodeURIComponent(id));

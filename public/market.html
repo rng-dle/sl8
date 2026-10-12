@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Marketplace · ThinkSL8</title>
+<meta name="description" content="Templates and themes for your ThinkSL8 canvas. All free to use.">
+<script>try{var t=JSON.parse(localStorage.getItem('sl8:theme'));if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0a2b48">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Gloock&family=Hanken+Grotesk:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/style.css">
+<style>
+  .page.wide { max-width: 1040px; }
+  .head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 16px; margin: 32px 0 16px; }
+  .head h1 { margin: 0; font: 400 clamp(32px, 6vw, 44px)/1.05 var(--font-display); }
+  .head p { margin: 6px 0 0; color: var(--muted); }
+  .tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .tools input { flex: 1 1 220px; min-width: 0; min-height: 42px; padding: 0 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); }
+  .tools input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+  .empty { padding: 40px 0; color: var(--muted); }
+  .shelf { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 18px; margin: 18px 0 0; padding: 0; list-style: none; }
+  .item { display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); overflow: hidden; }
+  /* a preview carries its own canvas theme (.theme-*), background colour and pattern */
+  .pv { --rule: var(--dot); aspect-ratio: 16 / 10; max-width: 100%; padding: 14px; background-color: var(--paper); color: var(--text); border-bottom: 1px solid var(--line); }
+  .pv svg { display: block; width: 100%; height: 100%; overflow: visible; }
+  .pv[data-pattern="dots"], .pv[data-pattern="iso"] { background-image: radial-gradient(circle, var(--rule) 1px, transparent 1.4px); background-size: 12px 12px; }
+  .pv[data-pattern="grid"], .pv[data-pattern="graph"], .pv[data-pattern="lines"] {
+    --faint: color-mix(in srgb, var(--rule) 55%, transparent);
+    background-image: linear-gradient(to bottom, var(--faint) 1px, transparent 1px), linear-gradient(to right, var(--faint) 1px, transparent 1px);
+    background-size: 12px 12px;
+  }
+  .pv[data-pattern="lines"] { background-image: linear-gradient(to bottom, var(--faint) 1px, transparent 1px); }
+  .info { display: grid; gap: 6px; padding: 14px 16px 16px; flex: 1; align-content: start; }
+  .kind { margin: 0; font-size: 12px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+  .info h3 { margin: 0; font: 400 22px/1.2 var(--font-display); text-wrap: balance; }
+  .info .d { margin: 0; font-size: 14px; color: var(--muted); }
+  .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
+  .acts .btn { min-height: 38px; padding: 0 14px; font-size: 14px; }
+  .acts .confirm { color: var(--danger); border-color: var(--danger); }
+  .publish { margin-top: 48px; padding-top: 24px; border-top: 1px solid var(--line); display: grid; gap: 16px; max-width: 560px; }
+  .publish h2 { margin: 0; font: 400 28px/1.15 var(--font-display); }
+  .publish > p { margin: 0; color: var(--muted); }
+  .publish form { display: grid; gap: 14px; }
+  .publish textarea { width: 100%; min-height: 140px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); font: 13px/1.45 ui-monospace, Menlo, Consolas, monospace; resize: vertical; }
+  .publish textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  label.btn:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+  dialog { width: min(420px, calc(100% - 32px)); padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); color: var(--text); box-shadow: var(--shadow); }
+  dialog::backdrop { background: rgb(10 14 24 / 0.45); }
+  dialog h2 { margin: 0 0 14px; font: 400 24px/1.2 var(--font-display); }
+  dialog form { display: grid; gap: 14px; }
+</style>
+</head>
+<body>
+<main class="page wide">
+  <header class="page-top">
+    <a class="wordmark" href="/">Think<span data-mark></span></a>
+    <a class="btn quiet" id="nav-canvases" href="/canvases" hidden>Canvases</a>
+    <a class="btn quiet" id="nav-login" href="/?next=/market" hidden>Log in</a>
+  </header>
+  <div class="head">
+    <div>
+      <h1>Marketplace</h1>
+      <p>Templates and themes for your canvas. All free to use.</p>
+    </div>
+  </div>
+  <div class="tools">
+    <div class="seg" role="radiogroup" aria-label="Show">
+      <label><input type="radio" name="kind" value="all" checked><span>All</span></label>
+      <label><input type="radio" name="kind" value="template"><span>Templates</span></label>
+      <label><input type="radio" name="kind" value="theme"><span>Themes</span></label>
+    </div>
+    <input id="q" type="search" placeholder="Search templates and themes" aria-label="Search the marketplace" autocomplete="off">
+  </div>
+  <p class="empty" id="status">Loading…</p>
+  <ul class="shelf" id="shelf"></ul>
+
+  <section class="publish" id="publish" hidden>
+    <h2>Publish a template</h2>
+    <p>Lay a template out on any canvas, then publish it here. Notes, drawings, arrows and the canvas look are copied. Photos, videos and portals stay private.</p>
+    <form id="pub" novalidate>
+      <div class="field">
+        <label for="p-src">From</label>
+        <select id="p-src"></select>
+      </div>
+      <div class="field" id="p-json" hidden>
+        <label for="p-text">Template JSON</label>
+        <textarea id="p-text" spellcheck="false" placeholder='{"name": "My template", "style": {}, "items": [...]}'></textarea>
+        <div class="row"><label class="btn">Upload a .json file<input id="p-file" class="vh" type="file" accept=".json,application/json"></label></div>
+      </div>
+      <div class="field"><label for="p-name">Name</label><input id="p-name" maxlength="60" autocomplete="off"></div>
+      <div class="field"><label for="p-desc">Description</label><input id="p-desc" maxlength="160" autocomplete="off" placeholder="One line on what it's for"></div>
+      <p class="notice error" id="p-error" role="alert" hidden></p>
+      <div class="row">
+        <button class="btn primary" id="p-go" type="submit">Publish</button>
+        <button class="btn" id="p-new" type="button">Start a new canvas for it</button>
+      </div>
+    </form>
+  </section>
+</main>
+
+<dialog id="apply" aria-labelledby="apply-title">
+  <h2 id="apply-title"></h2>
+  <form id="apply-form">
+    <div class="field">
+      <label for="apply-to">Use it on</label>
+      <select id="apply-to"><option value="">A new canvas</option></select>
+    </div>
+    <div class="row">
+      <button class="btn primary" type="submit">Use theme</button>
+      <button class="btn quiet" type="button" id="apply-cancel">Cancel</button>
+    </div>
+  </form>
+</dialog>
+<div id="toast" class="toast" role="alert" hidden></div>
+<script src="/common.js"></script>
+<script>
+const $ = (s) => document.querySelector(s);
+const HEX = /^#[0-9a-f]{6}$/i;
+const INKS = ['ink', 'blue', 'red', 'green', 'yellow', 'orange', 'purple', 'teal', 'pink'];
+const ink = (c) => (HEX.test(c) ? c : `var(--ink-${INKS.includes(c) ? c : 'ink'})`);
+const SVG = 'http://www.w3.org/2000/svg';
+function svgEl(tag, attrs, parent) { const e = document.createElementNS(SVG, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent?.append(e); return e; }
+function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; }
+function button(label, cls, onclick) { const b = el('button', 'btn ' + cls, label); b.type = 'button'; b.onclick = onclick; return b; }
+
+// A theme shows on this little canvas
+const SAMPLE = [
+  { id: 'h', kind: 'text', x: 0, y: 0, w: 600, s: 30, c: 'ink', text: 'Quarter plan' },
+  { id: 'a', kind: 'text', x: 0, y: 100, w: 170, s: 17, c: 'blue', text: 'Ideas\n- Launch\n- Hire' },
+  { id: 'b', kind: 'text', x: 220, y: 100, w: 170, s: 17, c: 'green', text: 'Doing\n- Pricing page' },
+  { id: 'c', kind: 'text', x: 440, y: 100, w: 170, s: 17, c: 'red', text: 'Risks\n- Timeline' },
+  { id: 's', kind: 'stroke', w: 3, c: 'orange', p: [0, 250, 0.5, 140, 232, 0.5, 300, 258, 0.5, 460, 236, 0.5, 610, 252, 0.5] },
+  { id: 'k1', kind: 'conn', a: 'h', b: 'a', c: 'ink' }, { id: 'k2', kind: 'conn', a: 'h', b: 'b', c: 'ink' }, { id: 'k3', kind: 'conn', a: 'h', b: 'c', c: 'ink' },
+];
+
+// Word-wrap at roughly the canvas's own width; good enough for a thumbnail.
+function wrap(text, w, s) {
+  const max = Math.max(4, Math.floor(w / (s * 0.5))), out = [];
+  for (const para of String(text).split('\n')) {
+    let line = '';
+    for (const word of para.split(' ')) {
+      if (line && (line + ' ' + word).length > max) { out.push(line); line = word; } else line = line ? line + ' ' + word : word;
+    }
+    out.push(line);
+  }
+  return out;
+}
+function previewSvg(items) {
+  const svg = svgEl('svg', { 'aria-hidden': 'true' }), box = new Map(), texts = [];
+  for (const it of items) {
+    if (it.kind === 'text') {
+      const lines = wrap(it.text, it.w, it.s).slice(0, 14);
+      texts.push([it, lines]);
+      box.set(it.id, [it.x, it.y, it.x + it.w, it.y + lines.length * it.s * 1.35]);
+    } else if (it.kind === 'stroke' && it.p?.length >= 3) {
+      const xs = it.p.filter((_, i) => i % 3 === 0), ys = it.p.filter((_, i) => i % 3 === 1);
+      box.set(it.id, [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)]);
+    }
+  }
+  if (!box.size) return svg;
+  const b = [...box.values()].reduce((a, c) => [Math.min(a[0], c[0]), Math.min(a[1], c[1]), Math.max(a[2], c[2]), Math.max(a[3], c[3])]);
+  const pad = Math.max(b[2] - b[0], b[3] - b[1]) * 0.04;
+  svg.setAttribute('viewBox', `${b[0] - pad} ${b[1] - pad} ${b[2] - b[0] + pad * 2} ${b[3] - b[1] + pad * 2}`);
+  const mid = (r) => [(r[0] + r[2]) / 2, (r[1] + r[3]) / 2];
+  for (const it of items) {
+    if (it.kind !== 'conn' || !box.has(it.a) || !box.has(it.b)) continue;
+    const [x1, y1] = mid(box.get(it.a)), [x2, y2] = mid(box.get(it.b));
+    svgEl('line', { x1, y1, x2, y2, 'vector-effect': 'non-scaling-stroke', style: `stroke: ${ink(it.c)}; stroke-width: 1.5px; opacity: 0.55` }, svg);
+  }
+  for (const it of items) {
+    if (it.kind !== 'stroke' || !box.has(it.id)) continue;
+    const pts = []; for (let i = 0; i + 1 < it.p.length; i += 3) pts.push(it.p[i] + ',' + it.p[i + 1]);
+    svgEl('polyline', { points: pts.join(' '), fill: 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', style: `stroke: ${ink(it.c)}; stroke-width: ${it.w || 3}${it.hl ? '; opacity: var(--hl-alpha)' : ''}` }, svg);
+  }
+  for (const [it, lines] of texts) {
+    lines.forEach((ln, i) => {
+      if (!ln.trim()) return;
+      const t = svgEl('text', { x: it.x, y: it.y + it.s + i * it.s * 1.35, 'font-size': it.s, style: `fill: ${ink(it.c)}; font-family: var(--font-ui)${it.s >= 24 ? '; font-weight: 600' : ''}` }, svg);
+      t.textContent = ln;
+    });
+  }
+  return svg;
+}
+// The look of a template or theme, as the canvas would show it
+function preview(entry) {
+  const style = entry.data.style || {}, pv = el('div', 'pv');
+  const luminance = (h) => [1, 3, 5].reduce((n, i, k) => n + [0.2126, 0.7152, 0.0722][k] * parseInt(h.slice(i, i + 2), 16) / 255, 0);
+  const theme = style.theme || (HEX.test(style.paper || '') ? (luminance(style.paper) < 0.45 ? 'dark' : 'light') : null);
+  if (theme) pv.classList.add('theme-' + theme);
+  pv.dataset.pattern = style.pattern || 'dots';
+  if (HEX.test(style.paper || '')) pv.style.backgroundColor = style.paper;
+  if (HEX.test(style.rule || '')) pv.style.setProperty('--rule', style.rule);
+  pv.append(previewSvg(entry.kind === 'theme' ? SAMPLE : entry.data.items || []));
+  return pv;
+}
+
+let entries = [], signedIn = false, notes = null, navDone = false;
+async function myNotes() { return (notes ||= (await api('/api/notes')).notes); }
+const kindNow = () => document.querySelector('input[name=kind]:checked').value;
+
+function render() {
+  const q = $('#q').value.trim().toLowerCase(), k = kindNow();
+  const list = entries.filter((e) => (k === 'all' || e.kind === k) && (!q || `${e.name} ${e.description}`.toLowerCase().includes(q)));
+  $('#status').hidden = list.length > 0;
+  $('#status').textContent = q ? `Nothing matches “${$('#q').value.trim()}”.` : 'Nothing here yet.';
+  $('#shelf').replaceChildren(...list.map(card));
+}
+function card(e) {
+  const li = el('li', 'item'), info = el('div', 'info'), acts = el('div', 'acts');
+  const by = e.official ? 'Official' : e.mine ? 'Yours' : 'Community';
+  info.append(el('p', 'kind', `${e.kind === 'theme' ? 'Theme' : 'Template'} · ${by}`), el('h3', null, e.name));
+  if (e.description) info.append(el('p', 'd', e.description));
+  acts.append(button('Use', 'primary', (ev) => use(e, ev.currentTarget)));
+  if (e.kind === 'template') acts.append(button('Download', 'quiet', () => download(e)));
+  if (e.mine) {
+    const down = button('Take down', 'quiet', async () => {
+      if (!down.classList.contains('confirm')) { down.classList.add('confirm'); down.textContent = 'Take it down?'; setTimeout(() => { down.classList.remove('confirm'); down.textContent = 'Take down'; }, 4000); return; }
+      down.disabled = true;
+      try { await api('/api/market/' + encodeURIComponent(e.id), { method: 'DELETE' }); toast(`“${e.name}” was taken down.`); load(); }
+      catch (err) { toast(err.message); down.disabled = false; }
+    });
+    acts.append(down);
+  }
+  info.append(acts);
+  li.append(preview(e), info);
+  return li;
+}
+
+async function use(e, btn) {
+  if (!signedIn) return go('/?next=/market');
+  if (e.kind === 'theme') return chooseCanvas(e);
+  btn.disabled = true;
+  try { go('/note?id=' + encodeURIComponent((await api(`/api/market/${encodeURIComponent(e.id)}/use`, { method: 'POST' })).noteId)); }
+  catch (err) { toast(err.message); btn.disabled = false; }
+}
+let applying = null;
+async function chooseCanvas(e) {
+  applying = e;
+  $('#apply-title').textContent = e.name;
+  try {
+    const list = await myNotes();
+    $('#apply-to').replaceChildren(new Option('A new canvas', ''), ...list.map((n) => new Option(n.title, n.id)));
+  } catch (err) { return toast(err.message); }
+  $('#apply').showModal();
+}
+$('#apply-cancel').onclick = () => $('#apply').close();
+$('#apply-form').onsubmit = async (ev) => {
+  ev.preventDefault();
+  const noteId = $('#apply-to').value, btn = ev.submitter;
+  btn.disabled = true;
+  try {
+    const r = await api(`/api/market/${encodeURIComponent(applying.id)}/use`, { method: 'POST', body: noteId ? { noteId } : {} });
+    go('/note?id=' + encodeURIComponent(r.noteId));
+  } catch (err) { toast(err.message); btn.disabled = false; }
+};
+
+function download(e) {
+  const blob = new Blob([JSON.stringify({ format: 'thinksl8-template-1', name: e.name, description: e.description, ...e.data }, null, 2)], { type: 'application/json' });
+  const a = el('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = (e.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'template') + '.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+/* publishing */
+const JSON_SRC = '__json';
+let autoName = '';
+function fillName(name) { if (!$('#p-name').value || $('#p-name').value === autoName) $('#p-name').value = autoName = name; }
+async function setupPublish() {
+  try {
+    const list = await myNotes();
+    $('#p-src').replaceChildren(...list.map((n) => new Option(n.title, n.id)), new Option('Pasted or uploaded JSON', JSON_SRC));
+    $('#publish').hidden = false;
+    onSource();
+  } catch {}
+}
+function onSource() {
+  const json = $('#p-src').value === JSON_SRC;
+  $('#p-json').hidden = !json;
+  if (!json) fillName($('#p-src').selectedOptions[0]?.textContent || '');
+}
+$('#p-src').onchange = onSource;
+// Accepts a downloaded template, a single canvas, or an account export that holds one canvas.
+function parseTemplate(text) {
+  let d;
+  try { d = JSON.parse(text); } catch { throw new Error("That isn't valid JSON. Check for a missing comma, quote or bracket."); }
+  if (Array.isArray(d?.canvases)) {
+    if (d.canvases.length !== 1) throw new Error('That file is a full account export. Pick the canvas from the list above instead.');
+    d = d.canvases[0];
+  }
+  if (!Array.isArray(d?.items)) throw new Error('Expected a template or canvas with an "items" list.');
+  return { name: d.name || d.title || '', description: d.description || '', style: d.style || {}, items: d.items };
+}
+$('#p-file').onchange = async (ev) => {
+  const f = ev.target.files[0];
+  ev.target.value = '';
+  if (!f) return;
+  if (f.size > 2_000_000) return showError('That file is over 2 MB. Template files are usually much smaller.');
+  $('#p-text').value = await f.text();
+  try { fillName(parseTemplate($('#p-text').value).name || f.name.replace(/\.json$/i, '')); $('#p-error').hidden = true; } catch (err) { showError(err.message); }
+};
+function showError(msg) { $('#p-error').textContent = msg; $('#p-error').hidden = false; }
+$('#pub').onsubmit = async (ev) => {
+  ev.preventDefault();
+  $('#p-error').hidden = true;
+  let body = { name: $('#p-name').value, description: $('#p-desc').value };
+  try {
+    if ($('#p-src').value === JSON_SRC) {
+      const t = parseTemplate($('#p-text').value);
+      body = { ...body, style: t.style, items: t.items };
+      if (!body.description) body.description = t.description;
+    } else body.noteId = $('#p-src').value;
+  } catch (err) { return showError(err.message); }
+  if (!body.name.trim()) { $('#p-name').focus(); return showError('Give the template a name.'); }
+  $('#p-go').disabled = true;
+  try {
+    await api('/api/market', { method: 'POST', body });
+    toast(`Published “${body.name.trim()}”. It's on the shelf now.`);
+    $('#p-desc').value = ''; $('#p-text').value = ''; autoName = ''; $('#p-name').value = '';
+    onSource();
+    await load();
+  } catch (err) { showError(err.message); }
+  $('#p-go').disabled = false;
+};
+$('#p-new').onclick = async () => {
+  $('#p-new').disabled = true;
+  try { go('/note?id=' + encodeURIComponent((await api('/api/notes', { method: 'POST', body: { title: 'New template' } })).note.id)); }
+  catch (err) { toast(err.message); $('#p-new').disabled = false; }
+};
+
+for (const r of document.querySelectorAll('input[name=kind]')) r.onchange = render;
+$('#q').oninput = render;
+async function load() {
+  try {
+    const r = await api('/api/market');
+    entries = r.items;
+    signedIn = r.signedIn;
+    if (!navDone) {
+      navDone = true;
+      $('#nav-canvases').hidden = !signedIn;
+      $('#nav-login').hidden = signedIn;
+      if (signedIn) setupPublish();
+    }
+    render();
+  } catch (err) {
+    $('#status').textContent = "Couldn't load the marketplace. Check your connection and reload.";
+    toast(err.message);
+  }
+}
+addEventListener('pageshow', (e) => e.persisted && load());
+load();
+</script>
+</body>
+</html>
