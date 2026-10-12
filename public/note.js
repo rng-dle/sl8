@@ -779,7 +779,7 @@ board.addEventListener('pointerup', (e) => {
 
 /* ---------- minimap ---------- */
 const mm = $('#minimap'), mmx = mm.getContext('2d'), mmRects = new Map(); // id -> { it, r }: bounds are only recomputed when an item changes
-let mmView = null, mmTimer = 0, mmLast = 0;
+let mmView = null, mmTimer = 0, mmLast = 0, mmShapePath = null;
 const mmOn = () => store.get('sl8:minimap') !== 'off';
 function drawMinimap() {
   if (!mmOn() || !items.size || !mm) { mm.hidden = true; return; }
@@ -798,18 +798,28 @@ function drawMinimap() {
   for (const r of rects) { x0 = Math.min(x0, r.x0); y0 = Math.min(y0, r.y0); x1 = Math.max(x1, r.x1); y1 = Math.max(y1, r.y1); }
   const padX = (x1 - x0) * 0.06 || 1, padY = (y1 - y0) * 0.06 || 1;
   x0 -= padX; y0 -= padY; x1 += padX; y1 += padY;
-  const W = mm.width, H = mm.height, k = Math.min(W / (x1 - x0), H / (y1 - y0)), ox = (W - (x1 - x0) * k) / 2, oy = (H - (y1 - y0) * k) / 2;
+  const W = mm.width, H = mm.height, shape = store.get('sl8:mmShape') || 'rounded', inset = MM_INSET[shape] ?? 0.05;
+  const ix = W * inset, iy = H * inset, iw = W - 2 * ix, ih = H - 2 * iy;
+  const k = Math.min(iw / (x1 - x0), ih / (y1 - y0)), ox = ix + (iw - (x1 - x0) * k) / 2, oy = iy + (ih - (y1 - y0) * k) / 2;
   mmView = { x0, y0, k, ox, oy };
-  // nothing to find when the whole canvas already fits on screen
-  mm.hidden = rects.every((r) => r.x0 >= vx0 && r.x1 <= vx1 && r.y0 >= vy0 && r.y1 <= vy1);
-  if (mm.hidden) return;
+  mm.hidden = false;
+  const cs = getComputedStyle(document.documentElement), path = mmShapePath = mmPath(shape, W, H);
   mmx.clearRect(0, 0, W, H);
+  mmx.globalAlpha = store.get('sl8:mmBg') ? 1 : 0.9;
+  mmx.fillStyle = store.get('sl8:mmBg') || cs.getPropertyValue('--surface').trim() || '#fff';
+  mmx.fill(path);
+  mmx.globalAlpha = 1;
+  mmx.save(); mmx.clip(path);
   mmx.fillStyle = palette.text; mmx.globalAlpha = 0.45;
   for (const r of rects) mmx.fillRect(ox + (r.x0 - x0) * k, oy + (r.y0 - y0) * k, Math.max(2, (r.x1 - r.x0) * k), Math.max(2, (r.y1 - r.y0) * k));
   mmx.globalAlpha = 1;
   mmx.strokeStyle = palette.accent; mmx.lineWidth = 3; mmx.fillStyle = palette.accentSoft;
   const vx = ox + (vx0 - x0) * k, vy = oy + (vy0 - y0) * k, vw = (vx1 - vx0) * k, vh = (vy1 - vy0) * k;
   mmx.fillRect(vx, vy, vw, vh); mmx.strokeRect(vx, vy, vw, vh);
+  mmx.restore();
+  mmx.lineWidth = store.get('sl8:mmBorder') ? 5 : 2;
+  mmx.strokeStyle = store.get('sl8:mmBorder') || cs.getPropertyValue('--line').trim() || '#ccc';
+  mmx.stroke(path);
 }
 function mmJump(e) {
   if (!mmView) return;
@@ -817,10 +827,17 @@ function mmJump(e) {
   cam = { ...cam, x: board.clientWidth / 2 - wx * cam.z, y: board.clientHeight / 2 - wy * cam.z };
   camChanged();
 }
-mm.addEventListener('pointerdown', (e) => { mm.setPointerCapture(e.pointerId); mmJump(e); });
+mm.addEventListener('pointerdown', (e) => {
+  const r = mm.getBoundingClientRect();
+  if (mmShapePath && !mmx.isPointInPath(mmShapePath, (e.clientX - r.left) / r.width * mm.width, (e.clientY - r.top) / r.height * mm.height)) return; // outside the shape
+  mm.setPointerCapture(e.pointerId); mmJump(e);
+});
 mm.addEventListener('pointermove', (e) => { if (e.buttons || e.pointerType === 'touch') mmJump(e); });
-const mmLabel = () => { $('#minimap-toggle').textContent = mmOn() ? 'Hide minimap' : 'Show minimap'; };
-$('#minimap-toggle').onclick = () => { store.set('sl8:minimap', mmOn() ? 'off' : 'on'); mmLabel(); closeMenu(); drawMinimap(); };
+const mmLabel = () => { $('#minimap-toggle').textContent = mmOn() ? 'Hide minimap' : 'Show minimap'; $('#mm-btn').setAttribute('aria-pressed', String(mmOn())); };
+const mmFlip = () => { store.set('sl8:minimap', mmOn() ? 'off' : 'on'); mmLabel(); drawMinimap(); };
+$('#minimap-toggle').onclick = () => { closeMenu(); mmFlip(); };
+$('#mm-btn').onclick = mmFlip;
+addEventListener('storage', () => { mmLabel(); drawMinimap(); });
 mmLabel();
 
 const outside = () => toast('Only the highlighted squares are shared with you. Write inside them.');
@@ -1544,7 +1561,7 @@ $('#fab').addEventListener('click', (e) => { if (e.detail === 0) openRing(!ringO
 $('#ring-scrim').addEventListener('pointerdown', (e) => { e.preventDefault(); openRing(false); });
 // tools with nothing more to choose close the ring; drawing tools keep it open for their colours and sizes
 $('nav.bar').addEventListener('click', (e) => {
-  const b = e.target.closest('[data-tool], #zoom, #media-add, #music-btn');
+  const b = e.target.closest('[data-tool], #zoom, #media-add, #music-btn, #mm-btn');
   if (b && ringOpen() && !['pen', 'hl', 'eraser', 'text'].includes(b.dataset.tool)) openRing(false);
 });
 addEventListener('keydown', (e) => { if (e.key === 'Escape' && ringOpen()) openRing(false); });
@@ -1620,6 +1637,7 @@ addEventListener('keydown', (e) => {
   if (typing || mod || e.altKey) return;
   if ((e.key === 'Delete' || e.key === 'Backspace') && selection.size) { e.preventDefault(); deleteSelection(); return; }
   if (e.key === ' ') { spaceDown = true; document.body.classList.add('panning'); e.preventDefault(); return; }
+  if (e.key === 'm') { mmFlip(); return; }
   const map = { v: 'select', p: 'pen', h: 'hl', e: 'eraser', t: 'text', c: 'connect' };
   if (map[e.key]) setTool(map[e.key]);
   else if (e.key === '0') zoomAt(board.clientWidth / 2, board.clientHeight / 2, 1 / cam.z);

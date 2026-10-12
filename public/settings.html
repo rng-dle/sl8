@@ -155,6 +155,19 @@
       </div>
       <p class="help sub">The short tips on an empty canvas. Turn them off and they stay off. The tour is always there under ⋯ &gt; Show me around.</p>
     </div>
+    <div class="pref" id="minimap"><h3>Minimap</h3>
+      <div class="seg" role="radiogroup" aria-label="Minimap">
+        <label><input type="radio" name="mm" value="on"><span>On</span></label>
+        <label><input type="radio" name="mm" value="off"><span>Off</span></label>
+      </div>
+      <p class="help sub">A small map of the whole canvas in the corner. Tap or drag on it to jump there. On a canvas, press M or use the map button to switch it on and off.</p>
+      <div id="mm-shapes" role="radiogroup" aria-label="Minimap shape" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:8px;margin:8px 0"></div>
+      <div class="row">
+        <label class="logo-pick">Border <input type="color" id="mm-border"></label>
+        <label class="logo-pick">Background <input type="color" id="mm-bg"></label>
+        <button class="btn quiet" id="mm-reset" type="button">Reset colours</button>
+      </div>
+    </div>
     <div class="pref"><h3>Opening animation</h3>
       <div class="seg" role="radiogroup" aria-label="Opening animation">
         <label><input type="radio" name="reveal" value="full"><span>Stretch</span></label>
@@ -222,6 +235,7 @@
 <div id="toast" class="toast" role="alert" hidden></div>
 <script src="/common.js"></script>
 <script src="/sounds.js"></script>
+<script src="/minimap-shapes.js"></script>
 <script>
 const $ = (s) => document.querySelector(s);
 const SCOPE_TEXT = { selection: 'the notes you select', canvas: 'the canvas you ask from', all: 'any of your canvases' };
@@ -369,6 +383,38 @@ bindPref('bg', 'sl8:bg', 'dots');
 bindPref('reveal', 'sl8:revealMode', 'full');
 bindPref('toolbar', 'sl8:toolbar', 'ring');
 bindPref('hints', 'sl8:hints', 'on');
+// minimap (this device): on or off, one of 20 shapes, and your own border and background colours
+bindPref('mm', 'sl8:minimap', 'on');
+(() => {
+  const box = $('#mm-shapes'), cur = () => store.get('sl8:mmShape') || 'rounded';
+  const paint = () => {
+    for (const b of box.children) {
+      const c = b.querySelector('canvas'), x = c.getContext('2d'), p = mmPath(b.dataset.shape, c.width, c.height);
+      x.clearRect(0, 0, c.width, c.height);
+      x.fillStyle = store.get('sl8:mmBg') || getComputedStyle(document.documentElement).getPropertyValue('--surface').trim() || '#fff'; x.fill(p);
+      x.lineWidth = 3; x.strokeStyle = store.get('sl8:mmBorder') || getComputedStyle(document.documentElement).getPropertyValue('--muted').trim() || '#888'; x.stroke(p);
+      b.setAttribute('aria-checked', String(b.dataset.shape === cur()));
+      b.style.outline = b.dataset.shape === cur() ? '3px solid var(--accent)' : '1px solid var(--line)';
+    }
+  };
+  for (const [id, label] of MM_SHAPES) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.dataset.shape = id; b.setAttribute('role', 'radio'); b.title = label; b.setAttribute('aria-label', label);
+    b.style.cssText = 'padding:6px;border:0;border-radius:10px;background:transparent;display:grid;gap:4px;justify-items:center;font-size:12px;color:var(--text)';
+    b.innerHTML = '<canvas width="96" height="64" style="width:48px;height:32px"></canvas><span></span>';
+    b.querySelector('span').textContent = label;
+    b.onclick = () => { store.set('sl8:mmShape', id); paint(); };
+    box.append(b);
+  }
+  const hexOf = (k, fallback) => store.get(k) || fallback;
+  const border = $('#mm-border'), bg = $('#mm-bg');
+  border.value = hexOf('sl8:mmBorder', '#8a93a8'); bg.value = hexOf('sl8:mmBg', '#ffffff');
+  border.oninput = () => { store.set('sl8:mmBorder', border.value); paint(); };
+  bg.oninput = () => { store.set('sl8:mmBg', bg.value); paint(); };
+  $('#mm-reset').onclick = () => { store.set('sl8:mmBorder', null); store.set('sl8:mmBg', null); border.value = '#8a93a8'; bg.value = '#ffffff'; paint(); };
+  paint();
+})();
+
 
 // logo colours (this device): applied as you pick
 $('#logo-preview').innerHTML = sl8Mark();

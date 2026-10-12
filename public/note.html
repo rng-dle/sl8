@@ -68,8 +68,7 @@
   .music-list button { width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: none; text-align: left; font: 600 15px/1.25 var(--font-ui); color: var(--text); }
   .music-list button:hover { background: var(--accent-soft); }
   /* minimap: the whole canvas in a corner; tap or drag to move there */
-  #minimap { position: fixed; z-index: 12; left: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); width: 148px; height: 100px; border-radius: 12px; touch-action: none; cursor: pointer;
-    background: color-mix(in srgb, var(--surface) 88%, transparent); border: 1px solid var(--line); box-shadow: var(--shadow); }
+  #minimap { position: fixed; z-index: 12; left: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); width: 148px; height: 100px; touch-action: none; cursor: pointer; filter: drop-shadow(0 2px 6px rgb(0 0 0 / .18)); }
   @media (max-width: 640px) { #minimap { width: 108px; height: 74px; } }
   #texts { position: absolute; left: 0; top: 0; transform-origin: 0 0; pointer-events: none; }
   .tb { position: absolute; pointer-events: none; border-radius: 6px; }
@@ -344,6 +343,7 @@
     <button type="button" id="share-open">Share…</button>
     <button type="button" id="portal-add">Add a portal…</button>
     <button type="button" id="minimap-toggle">Minimap</button>
+    <a href="/settings#minimap">Minimap shape and colours</a>
     <button type="button" id="tour-start">Show me around</button>
     <a href="/canvases">All canvases</a>
     <a href="/market">Marketplace</a>
@@ -472,6 +472,7 @@
     <button class="icon-btn" data-tool="connect" aria-label="Connect (C)" title="Connect (C): drag from one note to another, or into empty space for a new linked note"><svg viewBox="0 0 24 24"><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="5.5" r="2.5"/><path d="M7.5 16.5 16.5 7.5"/><path d="M11 7.5h5.5V13"/></svg></button>
     <button class="icon-btn" data-tool="hand" aria-label="Move around (Space)" title="Move around (hold Space)"><svg viewBox="0 0 24 24"><path d="m5 9-3 3 3 3"/><path d="m9 5 3-3 3 3"/><path d="m15 19-3 3-3-3"/><path d="m19 9 3 3-3 3"/><path d="M2 12h20"/><path d="M12 2v20"/></svg></button>
     <button class="icon-btn" id="media-add" aria-label="Add a photo or video" title="Add a photo or video (or paste, or drop a file)"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg></button>
+    <button class="icon-btn" id="mm-btn" aria-label="Minimap (M)" aria-pressed="true" title="Minimap on or off (M). Shape and colours are in Settings."><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><rect x="12" y="11" width="6" height="5" rx="1"/></svg></button>
     <button class="icon-btn" id="music-btn" aria-label="Music and embeds" title="Music and embeds: Spotify, YouTube, Google Docs and more"><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></button>
     <input type="file" id="media-file" accept="image/*,video/*" multiple hidden>
     <span class="sep"></span>
@@ -484,6 +485,7 @@
 <div id="toast" class="toast" role="alert" hidden></div>
 <script src="/common.js"></script>
 <script src="/sounds.js"></script>
+<script src="/minimap-shapes.js"></script>
 <script src="/note.js"></script>
 <script src="/ai-panel.js"></script>
 </body>
