@@ -1,7 +1,7 @@
 # Browser run of sharing and sync against `wrangler dev`: the owner shares chosen squares to edit, someone without an
 # account draws inside them (and is stopped outside), the owner's open canvas picks it up, a view link only looks,
 # and a second device of the owner's sees the owner's own changes. python3 test/share-journey.py [base-url] [screenshot-dir]
-import random, sys
+import json, random, re, sys, time, urllib.parse, urllib.request
 from playwright.sync_api import sync_playwright
 
 B = sys.argv[1] if len(sys.argv) > 1 else "http://127.0.0.1:8787"
@@ -26,7 +26,11 @@ with sync_playwright() as p:
     pg.on("pageerror", lambda e: errors.append(str(e)))
     pg.goto(B + "/")
     post = lambda path, body: pg.evaluate("([p, b]) => api(p, { method: 'POST', body: b })", [path, body])  # the page's own fetch carries the cookie
-    post("/api/signup", {"email": f"sj{random.randint(1, 99999)}@example.com", "password": "correcthorse"})
+    email = f"sj{random.randint(1, 99999)}@example.com"
+    post("/api/signup", {"email": email, "password": "correcthorse"})
+    time.sleep(0.3)  # sharing needs a confirmed email: open the link from the stand-in inbox
+    mail = json.load(urllib.request.urlopen("http://127.0.0.1:8788/__emails?to=" + urllib.parse.quote(email)))
+    post("/api/verify", {"token": re.search(r"token=([a-f0-9]{64})", next(m for m in mail if "Confirm" in m["subject"])["text"]).group(1)})
     note = post("/api/notes", {"title": "Shared plan"})["note"]
     post(f"/api/notes/{note['id']}/ops", {"ops": [
         {"put": {"id": "a", "kind": "text", "t": 1, "x": 20, "y": 20, "w": 200, "s": 17, "c": "ink", "text": "inside"}},

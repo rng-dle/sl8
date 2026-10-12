@@ -1,4 +1,4 @@
-// Account email (password reset). Uses Resend when RESEND_API_KEY is set, or Cloudflare Email Sending
+// Account email (password reset, email verification). Uses Resend when RESEND_API_KEY is set, or Cloudflare Email Sending
 // when an EMAIL send binding is configured. With neither, reset reports that it isn't set up.
 const FROM = 'no-reply@thinksl8.com';
 
@@ -28,4 +28,15 @@ export function resetEmail(link) {
 <p style="color:#60667d;font-size:14px">The link works once and expires in 1 hour. If this wasn't you, ignore this email. Your password stays the same.</p>
 </div>`;
   return { subject: 'Reset your ThinkSL8 password', text, html };
+}
+
+export function verifyEmail(link) {
+  const text = `Confirm this is your email for ThinkSL8:\n${link}\n\nThe link works for 7 days. If you didn't make a ThinkSL8 account, ignore this email.`;
+  const html = `<div style="font:16px/1.5 system-ui,sans-serif;color:#191c29;max-width:480px">
+<p style="font:24px Georgia,serif;margin:0 0 16px">Think<span style="color:#2a44c4">SL8</span></p>
+<p>Confirm this is your email for ThinkSL8. Once it's confirmed you can share canvases.</p>
+<p><a href="${link}" style="display:inline-block;padding:12px 18px;background:#2a44c4;color:#fff;border-radius:10px;text-decoration:none;font-weight:600">Confirm my email</a></p>
+<p style="color:#60667d;font-size:14px">The link works for 7 days. If you didn't make a ThinkSL8 account, ignore this email.</p>
+</div>`;
+  return { subject: 'Confirm your email for ThinkSL8', text, html };
 }

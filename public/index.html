@@ -68,6 +68,7 @@
         <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="email" inputmode="email" required></div>
         <div class="field"><label for="password">Password</label><input id="password" type="password" autocomplete="current-password" minlength="8" required></div>
         <p class="hint" id="pw-hint" hidden>Use 8 or more characters.</p>
+        <div id="bot"></div>
         <p class="notice error" id="error" role="alert" hidden></p>
         <button class="btn primary" id="submit" type="submit">Log in</button>
         <a class="small-link" id="forgot" href="/reset">Forgot your password?</a>
@@ -113,7 +114,7 @@ $('#form').addEventListener('submit', async (e) => {
   $('#error').hidden = true;
   try {
     await api(mode === 'login' ? '/api/login' : '/api/signup', {
-      method: 'POST', body: { email: $('#email').value, password: $('#password').value },
+      method: 'POST', body: { email: $('#email').value, password: $('#password').value, turnstile: botToken() },
     });
     $('#password').value = '';
     await enter();
@@ -123,6 +124,9 @@ $('#form').addEventListener('submit', async (e) => {
     btn.disabled = false;
   }
 });
+
+let botToken = () => undefined;
+botCheck($('#bot')).then((f) => (botToken = f));
 
 enter().catch((err) => {
   $('#entering').hidden = true;
