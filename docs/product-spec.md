@@ -71,7 +71,7 @@ Decisions Josh made, grouped by area. "Flag" marks a decision that conflicts wit
 ## 12. Marketplace
 - Daily theme and template continue, with community voting.
 - Publishing is reviewed before listing; abuse is handled by a report button plus auto-scan.
-- More kinds later: sticker/icon packs, pen and brush styles, starter canvases, AI prompts/workflows.
+- More kinds later: sticker/icon packs, a free library of pen and brush styles (official set first, community later), starter canvases, AI prompts/workflows.
 
 ## 13. Brand and personalization
 - Customizable: themes/colors/fonts, toolbar layout, default behaviors, keyboard shortcuts.
