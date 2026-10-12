@@ -1,6 +1,7 @@
 // Sharing and sync against `wrangler dev`: links for the whole canvas or dot-grid areas, view vs edit,
 // area checks on writes, files through links, catching up on changes and deletes, turning links off. Exits non-zero on failure.
 const B = process.argv[2] || 'http://127.0.0.1:8787';
+const FAKE = process.env.FAKE || 'http://127.0.0.1:8788';
 let failed = 0;
 const ok = (cond, name, extra = '') => { console.log(`${cond ? 'ok  ' : 'FAIL'} - ${name}${!cond && extra ? `\n       ${extra}` : ''}`); if (!cond) failed++; };
 const rnd = () => Math.random().toString(36).slice(2, 8);
@@ -21,7 +22,11 @@ const ids = (r) => (r.body.items || []).map((i) => i.id).sort().join(',');
 const PNG = Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64'));
 
 const owner = new Client(), anon = new Client(), other = new Client();
-await owner.json('/api/signup', { method: 'POST', body: { email: `share-${rnd()}@example.com`, password: 'correcthorse' } });
+const ownerEmail = `share-${rnd()}@example.com`;
+await owner.json('/api/signup', { method: 'POST', body: { email: ownerEmail, password: 'correcthorse' } });
+await new Promise((r) => setTimeout(r, 300)); // sharing needs a confirmed email: open the link from the stand-in inbox
+const confirmMail = (await (await fetch(`${FAKE}/__emails?to=${encodeURIComponent(ownerEmail)}`)).json()).find((m) => /Confirm/.test(m.subject));
+await owner.json('/api/verify', { method: 'POST', body: { token: confirmMail.text.match(/token=([a-f0-9]{64})/)[1] } });
 await other.json('/api/signup', { method: 'POST', body: { email: `share-${rnd()}@example.com`, password: 'correcthorse' } });
 const { body: { note } } = await owner.json('/api/notes', { method: 'POST', body: { title: 'Shared' } });
 const N = `/api/notes/${note.id}`;

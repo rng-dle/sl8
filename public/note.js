@@ -1732,9 +1732,17 @@ async function createShare(area) {
     const { share: s } = await api(`${notePath}/shares`, { method: 'POST', body: { mode: $('input[name=sh-mode]:checked').value, area } });
     await openShare(s);
     copyLink(shareUrl(s.token));
-  } catch (e) { toast(e.message); }
+  } catch (e) {
+    if (e.kind !== 'verify') return toast(e.message);
+    await openShare();
+    $('#sh-verify span').textContent = e.message; // sharing needs a confirmed email
+    $('#sh-verify').hidden = false;
+  }
 }
-$('#share-open').onclick = () => openShare();
+$('#sh-resend').onclick = async () => {
+  try { await api('/api/verify/resend', { method: 'POST' }); toast('Sent. Open the link in the email, then share again.'); } catch (e) { toast(e.message); }
+};
+$('#share-open').onclick = () => { $('#sh-verify').hidden = true; openShare(); };
 $('#sh-create').onclick = () => {
   if ($('input[name=sh-area]:checked').value === '*') return createShare('*');
   $('#share-menu').hidden = true;

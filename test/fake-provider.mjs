@@ -1,5 +1,6 @@
 // Local stand-in for OpenRouter / OpenAI / Anthropic / Gemini and Resend, used only by tests via TEST_BASE.
 // Keys steer behaviour: "...revoked..." -> 401, "...broke..." -> 402, "...bad..." -> rejected at connect.
+// Turnstile (the bot check): the token "pass" passes.
 import { createServer } from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
 
@@ -45,6 +46,7 @@ createServer(async (req, res) => {
     if (!expected || b64url(createHash('sha256').update(code_verifier || '').digest()) !== expected) return send(res, 403, { error: { message: 'Invalid code or verifier' } });
     return send(res, 200, { key: 'sk-or-v1-oauth-' + randomUUID().slice(0, 8) });
   }
+  if (url.pathname === '/turnstile') return send(res, 200, { success: (await readBody(req)).response === 'pass' });
   if (url.pathname === '/__revoke') { revokedKeys.add((await readBody(req)).key); return send(res, 200, {}); }
   // stand-in for Resend: keep emails so tests can read the reset link
   if (url.pathname === '/resend/emails' && req.method === 'POST') { const m = await readBody(req); m.at = Date.now(); emails.push(m); return send(res, 200, { id: randomUUID() }); }

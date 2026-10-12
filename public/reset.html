@@ -32,6 +32,7 @@
     <p class="lede">Enter the email you signed up with. We'll send a link to choose a new password.</p>
     <form id="ask-form" novalidate>
       <div class="field"><label for="email">Email</label><input id="email" type="email" autocomplete="email" inputmode="email" required></div>
+      <div id="bot"></div>
       <p class="notice error" id="ask-error" role="alert" hidden></p>
       <button class="btn primary" type="submit" id="ask-btn">Send reset link</button>
     </form>
@@ -63,6 +64,9 @@ const token = new URLSearchParams(location.search).get('token');
 if (token) history.replaceState(null, '', '/reset'); // keep the token out of history and screenshots
 $(token ? '#set' : '#ask').hidden = false;
 
+let botToken = () => undefined;
+if (!token) botCheck($('#bot')).then((f) => (botToken = f));
+
 function busy(btn, on, label) { btn.disabled = on; if (label) btn.textContent = label; }
 
 $('#ask-form').addEventListener('submit', async (e) => {
@@ -71,7 +75,7 @@ $('#ask-form').addEventListener('submit', async (e) => {
   busy(btn, true, 'Sending…');
   $('#ask-error').hidden = true;
   try {
-    await api('/api/password/forgot', { method: 'POST', body: { email: $('#email').value } });
+    await api('/api/password/forgot', { method: 'POST', body: { email: $('#email').value, turnstile: botToken() } });
     $('#asked-email').textContent = $('#email').value.trim();
     $('#ask').hidden = true;
     $('#asked').hidden = false;

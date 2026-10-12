@@ -18,6 +18,8 @@ Password reset needs an email sender. Either:
 - **Resend** (free tier): create an account, add `thinksl8.com` as a sending domain (Resend can add the DNS records to Cloudflare for you), then add the API key as the secret `RESEND_API_KEY`.
 - **Cloudflare Email Sending** (public beta, Workers Paid plan): onboard `thinksl8.com` in Email Service and add a `send_email` binding named `EMAIL`.
 
+The bot check (Cloudflare Turnstile) on sign-up, sign-in and reset requests switches on once both keys are set: in Cloudflare → Turnstile → Add widget, use hostname `thinksl8.com` and mode Managed, then add the site key as the variable `TURNSTILE_SITE_KEY` and the secret key as the secret `TURNSTILE_SECRET` (`sl8` → Settings → Variables and Secrets).
+
 Mail goes out from `no-reply@thinksl8.com` (override with a `MAIL_FROM` variable). Until one is set up, "Forgot your password?" says reset isn't available yet.
 
 `sl8.nastaliq.co` still serves the app (same data, separate sign-in). To forward it to thinksl8.com, add a Redirect Rule for that hostname in Cloudflare, or remove it from `routes` in `wrangler.toml`.
@@ -39,9 +41,10 @@ Then, in another terminal:
 bash test/smoke-test.sh && node test/ai-test.mjs && node test/account-test.mjs && node test/share-test.mjs && python3 test/pen-test.py && python3 test/journey.py && python3 test/share-journey.py
 ```
 
-- `smoke-test.sh`: accounts, saving, isolation between users, lockout, logout.
+- `smoke-test.sh`: accounts, saving, isolation between users, lockout (per account and network, so strangers can't lock you out), logout.
+- `bot-test.mjs`: the bot check, against a second `wrangler dev --port 8789 --var TURNSTILE_SITE_KEY:test-site --var TURNSTILE_SECRET:test-secret`.
 - `ai-test.mjs`: AI connections, encryption at rest, OpenRouter sign-in (PKCE), scopes, retrieval, every error state, the daily cap.
-- `account-test.mjs`: password reset by email, change password, log out everywhere, export, search, account deletion, rate limits, the 404 page.
+- `account-test.mjs`: email confirmation (sharing waits for it), password reset by email, change password, log out everywhere, export, search, account deletion, rate limits, the 404 page.
 - `share-test.mjs`: share links (whole canvas or squares, view or edit), area checks on every write, files through links, catching up on changes and deletes.
 - `pen-test.py`: simulated S Pen with a resting palm, and the "Draw with finger" toggle.
 - `share-journey.py`: sharing chosen squares in a browser, someone without an account editing inside them, the owner's canvas and second device picking changes up, view links.
@@ -68,12 +71,11 @@ The Python tests need `pip install playwright && playwright install chromium`.
 - **Search:** on the Canvases page, across everything typed and every canvas title. Results open the canvas at that note.
 - **Account (Settings):** change password, download all your data as JSON, log out on all devices, delete the account.
 - **Install:** the site has an app icon and manifest, so "Add to Home screen" on a phone opens it like an app.
-- **Limits against abuse:** 10 sign-ups an hour and 30 sign-in attempts per 10 minutes from one network, account lockout after 10 wrong passwords, and up to 3 reset emails an hour per address.
+- **Limits against abuse:** 10 sign-ups an hour and 30 sign-in attempts per 10 minutes from one network; after 10 wrong passwords for an account from one network, that network waits 15 minutes (others, including the owner, aren't affected); up to 3 reset or confirmation emails an hour per address; the bot check once it's switched on.
+- **Email confirmation:** sign-up sends a link. Sharing waits until it's opened, so throwaway accounts can't publish links. Resetting a password by email also confirms it. Accounts from before this change count as confirmed.
 
 ## Not built yet
 
-- Email verification on sign-up.
-- Bot protection on sign-up beyond the rate limits (Cloudflare Turnstile).
 - Sign in with ChatGPT: OpenAI requires approval for hosted apps (interest form linked in `docs/PLAN.md`).
 - Handwriting recognition and semantic search.
 - Live strokes while someone is drawing (sync is every few seconds; a Durable Object with WebSockets would make it live).
