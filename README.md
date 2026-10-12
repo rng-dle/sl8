@@ -48,6 +48,7 @@ bash test/smoke-test.sh && node test/ai-test.mjs && node test/account-test.mjs &
 - `share-test.mjs`: share links (whole canvas or squares, view or edit), area checks on every write, files through links, catching up on changes and deletes.
 - `pen-test.py`: simulated S Pen with a resting palm, and the "Draw with finger" toggle.
 - `share-journey.py`: sharing chosen squares in a browser, someone without an account editing inside them, the owner's canvas and second device picking changes up, view links.
+- `tour-test.py`: the guided tour from setup, every step, on a phone, a phone that has used a pen, and a desktop; double-tap to write; Show me around.
 - `journey.py`: the whole journey in a browser, from signup through setup, the reveal, writing, selecting, asking AI and reloading, to settings, search, password reset and a phone layout.
 
 The Python tests need `pip install playwright && playwright install chromium`.
@@ -62,7 +63,7 @@ The Python tests need `pip install playwright && playwright install chromium`.
 
 - **Select tool (V):** drag a box to select ink and text, drag to move, Delete to remove. Double-tap or double-click empty space to write.
 - **Pen (P), highlighter (H), eraser (E), text (T).** An S Pen's side button or a tablet pen's eraser end erases while held.
-- **Fingers:** once a pen has been used on the device, fingers move the page. "Draw with finger", next to the pen colours, switches that back.
+- **Fingers:** once a pen has been used on the device, fingers move the page. A finger tap still counts: double-tap writes, and the text tool starts a note where you tap. "Draw with finger", next to the pen colours, switches that back.
 - **Desktop:** the wheel pans, Ctrl + wheel or a trackpad pinch zooms, and holding Space lets you drag. Ctrl+Z and Ctrl+Shift+Z undo and redo.
 - **Appearance:** theme and canvas background in the ⋯ menu or Settings. The opening animation can be set to Full, Short or Off.
 - **Saving:** changes save every second. Offline edits stay on the device and are sent when the connection returns.

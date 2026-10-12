@@ -66,6 +66,7 @@ async function finish(connect) {
   try {
     const { note } = await api('/api/notes', { method: 'POST', body: start === 'sample' ? { sample: true } : { title: 'Untitled' } });
     await api('/api/me/onboarded', { method: 'POST' });
+    store.set('sl8:tool', null); // a new account starts with the select tool, so double-tap writes
     try { sessionStorage.setItem('sl8:reveal', '1'); if (start === 'tour') sessionStorage.setItem('sl8:tour', '1'); } catch {}
     const canvas = '/note?id=' + encodeURIComponent(note.id);
     location.replace(connect ? '/api/ai/openrouter/start?return=' + encodeURIComponent(canvas) : canvas);

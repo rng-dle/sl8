@@ -164,9 +164,9 @@
   .dock.ring.open .ring-item:disabled { opacity: .45; }
   .dock.ring #width.ring-item { width: 120px; height: 34px; padding: 0 10px; border-radius: 999px; background: var(--surface); box-shadow: var(--shadow); }
   /* guided tour: a card that never blocks the canvas, and a pulsing ring around what it's talking about */
-  .tour { position: fixed; z-index: 27; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 64px); translate: -50% 0; width: min(420px, calc(100vw - 24px));
+  .tour, .picker { position: fixed; z-index: 27; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 64px); translate: -50% 0; width: min(420px, calc(100vw - 24px));
     display: grid; gap: 10px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
-  .tour p { margin: 0; }
+  .tour p, .picker p { margin: 0; }
   .tour-step { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
   .tour-text { font-size: 17px; line-height: 1.4; text-wrap: pretty; }
   .tour-actions { display: flex; justify-content: space-between; gap: 8px; }
@@ -358,7 +358,7 @@
     <ul class="share-list" id="sh-list"></ul>
   </div>
 </div>
-<div id="picker" class="tour" hidden role="dialog" aria-label="Choose squares to share">
+<div id="picker" class="picker" hidden role="dialog" aria-label="Choose squares to share">
   <p class="tour-text">Tap or drag across the squares to share. Zoom first to change their size.</p>
   <div class="tour-actions"><button class="btn quiet" type="button" id="pick-cancel">Cancel</button><button class="btn primary" type="button" id="pick-done" disabled>Create link</button></div>
 </div>
