@@ -329,17 +329,16 @@ async function changes(env, noteId, since, area) {
   const now = Date.now();
   if (now - since > TOMB_DAYS * 864e5) return json({ now, reload: true });
   const after = since - 5000; // a write from another Worker instance can land a moment after its timestamp
-  if (area !== '*') { // items that left the area count as deleted for this link
-    const rows = await loadItems(env, noteId), byId = new Map(rows.map((r) => [r.it.id, r.it]));
-    const { results } = await env.DB.prepare('SELECT id FROM tombstones WHERE note_id = ? AND at > ?').bind(noteId, after).all();
-    const changed = rows.filter((r) => r.at > after), vis = changed.filter((r) => shown(area, byId, r.it));
-    const gone = [...results.map((r) => r.id).filter((id) => !byId.has(id)), ...changed.filter((r) => !vis.includes(r)).map((r) => r.it.id)];
-    return json(`{"now":${now},"gone":${JSON.stringify(gone)},"items":[${vis.map((r) => r.data).join(',')}]}`);
-  }
   const [{ results: rows }, { results: gone }] = await env.DB.batch([
     env.DB.prepare('SELECT data FROM items WHERE note_id = ? AND updated_at > ?').bind(noteId, after),
     env.DB.prepare('SELECT id FROM tombstones t WHERE note_id = ? AND at > ? AND NOT EXISTS (SELECT 1 FROM items i WHERE i.note_id = t.note_id AND i.id = t.id)').bind(noteId, after),
   ]);
+  if (area !== '*' && rows.length) { // something changed: check it against the area; items that left it count as deleted
+    const all = await loadItems(env, noteId), byId = new Map(all.map((r) => [r.it.id, r.it]));
+    const changed = all.filter((r) => r.at > after), vis = changed.filter((r) => shown(area, byId, r.it));
+    gone.push(...changed.filter((r) => !vis.includes(r)).map((r) => ({ id: r.it.id })));
+    rows.splice(0, rows.length, ...vis);
+  }
   return json(`{"now":${now},"gone":${JSON.stringify(gone.map((r) => r.id))},"items":[${rows.map((r) => r.data).join(',')}]}`);
 }
 
