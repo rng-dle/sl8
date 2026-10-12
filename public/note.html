@@ -354,6 +354,17 @@
   <ul class="portal-list" id="portal-list"></ul>
 </div>
 
+<datalist id="conn-presets"><option value="inspires"><option value="depends on"><option value="supports"><option value="blocks"><option value="leads to"><option value="part of"><option value="example of"><option value="answers"><option value="contradicts"><option value="related to"></datalist>
+
+<div id="color-menu" class="menu" hidden role="dialog" aria-label="Type a colour">
+  <h3>Type a colour</h3>
+  <form id="color-form" class="row">
+    <input id="color-text" class="title-input" style="flex:1;box-shadow:none;border:1px solid var(--line);font-size:16px" placeholder="#d9661b, rgb(217,102,27) or hsl(24,78%,48%)" maxlength="60" aria-label="Colour as HEX, RGB or HSL" autocomplete="off" spellcheck="false">
+    <button class="btn primary" type="submit">Use</button>
+  </form>
+  <p id="color-now" class="help sub" style="margin:0;font-size:13px;color:var(--muted)"></p>
+</div>
+
 <div id="music-menu" class="menu" hidden role="dialog" aria-label="Music">
   <h3>Music and embeds</h3>
   <button class="btn primary" type="button" id="music-toggle">Play / pause</button>
@@ -438,6 +449,7 @@
     <span class="sep" id="sep-types"></span>
     <div class="group" id="swatches"></div>
     <label class="custom-color" id="custom-wrap" title="Any colour"><input type="color" id="custom-color" aria-label="Pick any colour"><span></span></label>
+    <button class="icon-btn" id="color-type" aria-label="Type a colour" title="Type a colour: HEX, RGB or HSL" style="font:700 17px/1 var(--font-ui)">#</button>
     <span class="sep" id="sep-width"></span>
     <input type="range" id="width" aria-label="Size">
     <span class="sep" id="sep-toggles"></span>

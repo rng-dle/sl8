@@ -21,8 +21,8 @@ const bctx = base.getContext('2d'), lctx = live.getContext('2d');
 const statusEl = $('#status'), titleEl = $('#title');
 
 // Named colours follow the canvas theme (see --ink-* in style.css); anything else is a fixed #rrggbb.
-const COLORS = ['ink', 'blue', 'red', 'green', 'yellow', 'orange', 'purple', 'teal', 'pink'];
-const PRESETS = { pen: ['ink', 'blue', 'red', 'green', 'orange', 'purple', 'teal', 'pink'], hl: ['yellow', 'green', 'blue', 'pink', 'orange'] };
+const COLORS = ['ink', 'blue', 'red', 'green', 'yellow', 'orange', 'purple', 'teal', 'pink', 'brown'];
+const PRESETS = { pen: ['ink', 'blue', 'red', 'green', 'orange', 'purple', 'teal', 'pink', 'brown'], hl: ['yellow', 'green', 'blue', 'pink', 'orange'] };
 PRESETS.text = PRESETS.pen;
 const HEX = /^#[0-9a-f]{6}$/i;
 const PEN_TYPES = {
@@ -1323,7 +1323,7 @@ function renderOptions() {
   const styled = t === 'pen' || t === 'hl' || t === 'text';
   const show = (id, on) => ($(id).hidden = !on);
   show('#types', t === 'pen'); show('#sep-types', t === 'pen');
-  for (const id of ['#swatches', '#custom-wrap', '#sep-width', '#width']) show(id, styled);
+  for (const id of ['#swatches', '#custom-wrap', '#color-type', '#sep-width', '#width']) show(id, styled);
   const sound = t === 'pen' || t === 'hl' || t === 'eraser', finger = touchScreen && sound; // finger drawing only matters for drawing tools
   show('#sound', sound); show('#finger', finger); show('#sep-toggles', styled && (sound || finger));
   opts.hidden = !styled && !sound && !finger;
@@ -1366,6 +1366,47 @@ $('#custom-color').addEventListener('change', (e) => {
   store.set('sl8:recentColors', recentColors);
   renderOptions();
 });
+
+// Type a colour: #rgb, #rrggbb, rgb(r, g, b) or hsl(h, s%, l%) (also "r g b"), shown back in all three forms
+function parseColor(text) {
+  const t = text.trim().toLowerCase(), hex = (r, g, b) => '#' + [r, g, b].map((n) => Math.max(0, Math.min(255, Math.round(n))).toString(16).padStart(2, '0')).join('');
+  let m = t.match(/^#?([0-9a-f]{3}|[0-9a-f]{6})$/);
+  if (m) { const h = m[1].length === 3 ? [...m[1]].map((c) => c + c).join('') : m[1]; return '#' + h; }
+  const n = (t.match(/-?\d*\.?\d+/g) || []).map(Number);
+  if (/^hsl/.test(t) && n.length === 3) {
+    const h = ((n[0] % 360) + 360) % 360, s = Math.max(0, Math.min(100, n[1])) / 100, l = Math.max(0, Math.min(100, n[2])) / 100;
+    const k = (x) => (x + h / 30) % 12, a = s * Math.min(l, 1 - l), f = (x) => l - a * Math.max(-1, Math.min(k(x) - 3, 9 - k(x), 1));
+    return hex(f(0) * 255, f(8) * 255, f(4) * 255);
+  }
+  if ((/^rgb/.test(t) || /^[\d\s,.]+$/.test(t)) && n.length === 3) return hex(...n);
+  return null;
+}
+function describeColor(h) {
+  const [r, g, b] = [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16)), mx = Math.max(r, g, b) / 255, mn = Math.min(r, g, b) / 255, l = (mx + mn) / 2, d = mx - mn;
+  let hue = 0;
+  if (d) hue = mx === r / 255 ? ((g - b) / 255 / d + 6) % 6 : mx === g / 255 ? (b - r) / 255 / d + 2 : (r - g) / 255 / d + 4;
+  const sat = d ? d / (1 - Math.abs(2 * l - 1)) : 0;
+  return `${h} · rgb(${r}, ${g}, ${b}) · hsl(${Math.round(hue * 60)}, ${Math.round(sat * 100)}%, ${Math.round(l * 100)}%)`;
+}
+$('#color-type').onclick = () => {
+  const open = $('#color-menu').hidden;
+  $('#color-menu').hidden = !open;
+  if (!open) return;
+  $('#color-now').textContent = 'Now: ' + describeColor(colorOf(tool.color[tool.name]));
+  $('#color-text').value = '';
+  $('#color-text').focus();
+};
+$('#color-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const c = parseColor($('#color-text').value);
+  if (!c) return toast('Try a colour like #d9661b, rgb(217, 102, 27) or hsl(24, 78%, 48%).');
+  tool.color[tool.name] = c; saveTools();
+  recentColors = [c, ...recentColors.filter((x) => x !== c)].slice(0, 4);
+  store.set('sl8:recentColors', recentColors);
+  $('#color-menu').hidden = true;
+  renderOptions();
+});
+addEventListener('pointerdown', (e) => { if (!$('#color-menu').hidden && !e.target.closest?.('#color-menu, #color-type')) $('#color-menu').hidden = true; }, true);
 $('#width').addEventListener('input', (e) => { tool.width[tool.name] = Number(e.target.value); saveTools(); });
 $('#sound').onclick = () => {
   scribble.on = !scribble.on;
@@ -1561,7 +1602,7 @@ titleEl.addEventListener('change', saveTitle);
 titleEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') titleEl.blur(); });
 
 function updateHint() {
-  $('#hint').hidden = items.size > 0;
+  $('#hint').hidden = items.size > 0 || store.get('sl8:hints') === 'off';
 }
 
 /* ---------- options menu: theme and background, saved on this device ---------- */
@@ -1937,6 +1978,7 @@ function editLabel(id) {
   setSelection([id]);
   const input = document.createElement('input');
   input.className = 'conn-label';
+  input.setAttribute('list', 'conn-presets'); // suggestions for the kind of link; anything can still be typed
   input.value = c.label || '';
   input.placeholder = 'Label';
   input.maxLength = 80;

@@ -123,7 +123,7 @@
 <script>
 const $ = (s) => document.querySelector(s);
 const HEX = /^#[0-9a-f]{6}$/i;
-const INKS = ['ink', 'blue', 'red', 'green', 'yellow', 'orange', 'purple', 'teal', 'pink'];
+const INKS = ['ink', 'blue', 'red', 'green', 'yellow', 'orange', 'purple', 'teal', 'pink', 'brown'];
 const ink = (c) => (HEX.test(c) ? c : `var(--ink-${INKS.includes(c) ? c : 'ink'})`);
 const SVG = 'http://www.w3.org/2000/svg';
 function svgEl(tag, attrs, parent) { const e = document.createElementNS(SVG, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent?.append(e); return e; }

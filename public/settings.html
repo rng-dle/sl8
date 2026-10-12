@@ -148,6 +148,13 @@
       </div>
       <p class="help sub">For the browser tab, the app icon when you install ThinkSL8, and the opening. An app you installed already picks up new colours when your browser next refreshes it, usually within a day; reinstalling it updates it now.</p>
     </div>
+    <div class="pref"><h3>Hints</h3>
+      <div class="seg" role="radiogroup" aria-label="Hints">
+        <label><input type="radio" name="hints" value="on"><span>On</span></label>
+        <label><input type="radio" name="hints" value="off"><span>Off</span></label>
+      </div>
+      <p class="help sub">The short tips on an empty canvas. Turn them off and they stay off. The tour is always there under ⋯ &gt; Show me around.</p>
+    </div>
     <div class="pref"><h3>Opening animation</h3>
       <div class="seg" role="radiogroup" aria-label="Opening animation">
         <label><input type="radio" name="reveal" value="full"><span>Stretch</span></label>
@@ -361,6 +368,7 @@ bindPref('theme', 'sl8:theme', '', applyTheme);
 bindPref('bg', 'sl8:bg', 'dots');
 bindPref('reveal', 'sl8:revealMode', 'full');
 bindPref('toolbar', 'sl8:toolbar', 'ring');
+bindPref('hints', 'sl8:hints', 'on');
 
 // logo colours (this device): applied as you pick
 $('#logo-preview').innerHTML = sl8Mark();
