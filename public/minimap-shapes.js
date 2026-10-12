@@ -1,6 +1,6 @@
-// The 20 shapes a minimap can take. mmPath(name, w, h) -> a Path2D filling the w x h box. Used by the canvas and by the picker in Settings.
+// The 21 shapes a minimap can take. mmPath(name, w, h) -> a Path2D filling the w x h box. Used by the canvas and by the picker in Settings.
 const MM_SHAPES = [
-  ['rounded', 'Rounded'], ['rect', 'Rectangle'], ['ellipse', 'Ellipse'], ['pill', 'Pill'], ['squircle', 'Squircle'],
+  ['rounded', 'Rounded'], ['rect', 'Rectangle'], ['circle', 'Circle'], ['ellipse', 'Ellipse'], ['pill', 'Pill'], ['squircle', 'Squircle'],
   ['diamond', 'Diamond'], ['hexagon', 'Hexagon'], ['octagon', 'Octagon'], ['pentagon', 'Pentagon'], ['triangle', 'Triangle'],
   ['star', 'Star'], ['cross', 'Cross'], ['heart', 'Heart'], ['shield', 'Shield'], ['parallelogram', 'Slanted'],
   ['trapezoid', 'Trapezoid'], ['chevron', 'Arrow'], ['notched', 'Cut corners'], ['ticket', 'Ticket'], ['bubble', 'Speech bubble'],
@@ -13,6 +13,7 @@ function mmPath(name, w, h) {
   };
   switch (name) {
     case 'rect': p.rect(0, 0, w, h); break;
+    case 'circle': p.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, Math.PI * 2); break; // the box is square (see MM_ASPECT)
     case 'ellipse': p.ellipse(w / 2, h / 2, w / 2, h / 2, 0, 0, Math.PI * 2); break;
     case 'pill': r(h / 2); break;
     case 'squircle': { // superellipse, exponent 4
@@ -49,9 +50,9 @@ function mmPath(name, w, h) {
   return p;
 }
 // Width over height each shape is drawn at, so squares stay square and a hexagon, star or triangle keeps its true proportions
-const MM_ASPECT = { rounded: 1.5, rect: 1.5, pill: 1.7, squircle: 1.4, ellipse: 1.4, diamond: 1, hexagon: 1.155, octagon: 1, pentagon: 1.05, triangle: 1.155, star: 1.05, cross: 1, heart: 1.1, shield: 0.9, parallelogram: 1.6, trapezoid: 1.5, chevron: 1.6, notched: 1.5, ticket: 1.6, bubble: 1.4 };
+const MM_ASPECT = { rounded: 1.5, rect: 1.5, pill: 1.7, squircle: 1.4, ellipse: 1.4, circle: 1, diamond: 1, hexagon: 1.155, octagon: 1, pentagon: 1.05, triangle: 1.155, star: 1.05, cross: 1, heart: 1.1, shield: 0.9, parallelogram: 1.6, trapezoid: 1.5, chevron: 1.6, notched: 1.5, ticket: 1.6, bubble: 1.4 };
 // the rectangle inside each shape where the map itself is drawn: [left, top, right, bottom] as fractions of the box
-const MM_BOX = { rounded: [.04, .06, .96, .94], rect: [.04, .06, .96, .94], pill: [.12, .1, .88, .9], squircle: [.08, .08, .92, .92], ellipse: [.15, .15, .85, .85],
+const MM_BOX = { rounded: [.04, .06, .96, .94], rect: [.04, .06, .96, .94], pill: [.12, .1, .88, .9], squircle: [.08, .08, .92, .92], ellipse: [.15, .15, .85, .85], circle: [.15, .15, .85, .85],
   diamond: [.25, .25, .75, .75], hexagon: [.15, .2, .85, .8], octagon: [.15, .15, .85, .85], pentagon: [.2, .4, .8, .92], triangle: [.28, .5, .72, .94],
   star: [.3, .4, .7, .72], cross: [.06, .37, .94, .63], heart: [.22, .2, .78, .62], shield: [.14, .1, .86, .62], parallelogram: [.22, .1, .78, .9],
   trapezoid: [.2, .1, .8, .9], chevron: [.28, .1, .72, .9], notched: [.1, .1, .9, .9], ticket: [.12, .08, .88, .92], bubble: [.06, .06, .94, .78] };

@@ -244,6 +244,7 @@
 <script src="/common.js"></script>
 <script src="/sounds.js"></script>
 <script src="/minimap-shapes.js"></script>
+<script src="/colorpicker.js"></script>
 <script>
 const $ = (s) => document.querySelector(s);
 const SCOPE_TEXT = { selection: 'the notes you select', canvas: 'the canvas you ask from', all: 'any of your canvases' };
@@ -391,7 +392,7 @@ bindPref('bg', 'sl8:bg', 'dots');
 bindPref('reveal', 'sl8:revealMode', 'full');
 bindPref('toolbar', 'sl8:toolbar', 'ring');
 bindPref('hints', 'sl8:hints', 'on');
-// minimap (this device): on or off, one of 20 shapes, and your own border and background colours
+// minimap (this device): on or off, one of 21 shapes, and your own border and background colours
 bindPref('mm', 'sl8:minimap', 'on');
 bindPref('zr', 'sl8:zoomRange', '4');
 (() => {
