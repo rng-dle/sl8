@@ -326,7 +326,7 @@ function paintLive() {
     }
   }
 }
-const resizable = () => { const it = selection.size === 1 && items.get([...selection][0]); return isMedia(it) && !gesture?.kind?.match(/move|marquee/) ? it : null; };
+const resizable = () => { const it = selection.size === 1 && items.get([...selection][0]); return (isMedia(it) || it?.kind === 'embed') && !gesture?.kind?.match(/move|marquee/) ? it : null; };
 const handleAt = (it) => [(it.x + it.w) * cam.z + cam.x + 6, (it.y + it.h) * cam.z + cam.y + 6];
 function paintView() {
   textsEl.style.transform = `translate(${cam.x}px, ${cam.y}px) scale(${cam.z})`;
@@ -445,13 +445,13 @@ function apply(id, item, save = true) {
   if (item) items.set(id, item); else { items.delete(id); selection.delete(id); }
   sorted = null;
   if (item) renderDom(item);
-  else if (textEls.has(id)) { textEls.get(id).remove(); textEls.delete(id); }
+  else if (textEls.has(id)) { ctrls.get(id)?.destroy?.(); ctrls.delete(id); textEls.get(id).remove(); textEls.delete(id); }
   if (save) queue(id, item);
   // arrows hang off other items, so anything but a plain new stroke can move them
   if (item?.kind !== 'stroke' && (connCount || item?.kind === 'conn' || prev?.kind === 'conn' || isMedia(item) || isMedia(prev))) schedule(true);
   updateHint();
 }
-const renderDom = (it) => (it.kind === 'text' ? renderText(it) : it.kind === 'portal' ? renderPortal(it) : null);
+const renderDom = (it) => (it.kind === 'text' ? renderText(it) : it.kind === 'portal' ? renderPortal(it) : it.kind === 'embed' ? renderEmbed(it) : null);
 // arrows attached to any of these items
 const connsOf = (ids) => [...items.values()].filter((it) => it.kind === 'conn' && (ids.has(it.a) || ids.has(it.b)));
 function commit(changes) {
@@ -790,7 +790,7 @@ function addPortal(target) {
 /* ---------- selection ---------- */
 function itemRect(it) {
   if (it.kind === 'stroke') return bbox(it);
-  if (it.kind === 'portal' || isMedia(it)) return { x0: it.x, y0: it.y, x1: it.x + it.w, y1: it.y + it.h };
+  if (it.kind === 'portal' || it.kind === 'embed' || isMedia(it)) return { x0: it.x, y0: it.y, x1: it.x + it.w, y1: it.y + it.h };
   if (it.kind === 'conn') {
     const e = connEnds(it);
     return e && { x0: Math.min(e[0][0], e[1][0]), y0: Math.min(e[0][1], e[1][1]), x1: Math.max(e[0][0], e[1][0]), y1: Math.max(e[0][1], e[1][1]) };
@@ -828,7 +828,7 @@ function hitItem(x, y) {
   if (!sorted) sorted = [...items.values()].sort((a, b) => a.t - b.t);
   for (let i = sorted.length - 1; i >= 0; i--) { // text and portals sit above everything drawn
     const it = sorted[i];
-    if (it.kind !== 'text' && it.kind !== 'portal') continue;
+    if (it.kind !== 'text' && it.kind !== 'portal' && it.kind !== 'embed') continue;
     const b = itemRect(it);
     if (x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) return it;
   }
@@ -853,7 +853,7 @@ function hitItem(x, y) {
 function setSelection(ids) {
   selection.clear();
   for (const id of ids) if (items.has(id)) selection.add(id);
-  for (const [id, el] of textEls) el.classList.toggle('selected', selection.has(id));
+  for (const [id, el] of textEls) { el.classList.toggle('selected', selection.has(id)); if (!selection.has(id)) el.classList.remove('live'); }
   schedule(false);
 }
 function inRect(it, r) {
@@ -1107,6 +1107,7 @@ function onMove(e) {
   } else if (gesture.kind === 'resize') { // keeps its shape
     const o = gesture.orig, w = Math.max(24, toWorld(e.clientX, e.clientY)[0] - o.x);
     items.set(o.id, { ...o, w: Math.round(w), h: Math.round((w * o.h) / o.w) });
+    renderDom(items.get(o.id));
     schedule(true);
   } else if (gesture.kind === 'pick') {
     pickAt(e.clientX, e.clientY);
@@ -1193,6 +1194,7 @@ function doubleTap(e, tap, wasEditing) {
   const hit = hitItem(x, y);
   if (hit?.kind === 'text') editText(hit.id);
   else if (hit?.kind === 'portal') openPortal(hit.id);
+  else if (hit?.kind === 'embed') textEls.get(hit.id)?.classList.toggle('live');
   else if (hit?.kind === 'conn') editLabel(hit.id);
   else if (hit?.kind === 'video') toggleVideo(hit);
   else if (!wasEditing) { setSelection([]); newText(x, y); }
@@ -1396,7 +1398,7 @@ $('#fab').addEventListener('click', (e) => { if (e.detail === 0) openRing(!ringO
 $('#ring-scrim').addEventListener('pointerdown', (e) => { e.preventDefault(); openRing(false); });
 // tools with nothing more to choose close the ring; drawing tools keep it open for their colours and sizes
 $('nav.bar').addEventListener('click', (e) => {
-  const b = e.target.closest('[data-tool], #zoom, #media-add');
+  const b = e.target.closest('[data-tool], #zoom, #media-add, #music-btn');
   if (b && ringOpen() && !['pen', 'hl', 'eraser', 'text'].includes(b.dataset.tool)) openRing(false);
 });
 addEventListener('keydown', (e) => { if (e.key === 'Escape' && ringOpen()) openRing(false); });
@@ -1631,6 +1633,80 @@ $('#c-image').onchange = async (e) => {
     toast(err.message || "Couldn't use that image.");
   }
 };
+
+/* ---------- music: Spotify players on the canvas, controlled from the ring ---------- */
+const ctrls = new Map(); // embed id -> Spotify iFrame API controller
+const SPOTIFY = /(?:open\.spotify\.com\/(?:intl-[a-z]+\/)?|spotify:)(track|album|playlist|artist|episode|show)[/:]([A-Za-z0-9]{22})/;
+const parseSpotify = (text) => { const m = String(text).match(SPOTIFY); return m ? `${m[1]}/${m[2]}` : null; };
+let spotifyApi = null;
+const withSpotify = (fn) => {
+  if (spotifyApi) return fn(spotifyApi);
+  if (!window.onSpotifyIframeApiReady) {
+    window.onSpotifyIframeApiReady = (api) => { spotifyApi = api; for (const f of withSpotify.q) f(api); withSpotify.q = []; };
+    withSpotify.q = [];
+    const s = document.createElement('script'); s.src = 'https://open.spotify.com/embed/iframe-api/v1'; s.async = true; document.head.append(s);
+  }
+  withSpotify.q.push(fn);
+};
+const spotifyUri = (ref) => 'spotify:' + ref.replace('/', ':');
+function renderEmbed(it) {
+  let el = textEls.get(it.id);
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'embed';
+    el.innerHTML = '<div class="embed-bar"><span>Spotify</span><button type="button" class="embed-use" aria-pressed="false">Use</button></div><div class="embed-host"><div></div></div>';
+    el.querySelector('.embed-use').addEventListener('click', () => { setSelection([it.id]); el.classList.toggle('live'); });
+    textsEl.append(el);
+    textEls.set(it.id, el);
+    el.classList.toggle('selected', selection.has(it.id));
+  }
+  Object.assign(el.style, { left: it.x + 'px', top: it.y + 'px', width: it.w + 'px', height: it.h + 'px' });
+  if (el._ref === it.ref) return;
+  const first = !el._ref;
+  el._ref = it.ref;
+  if (!first) { ctrls.get(it.id)?.loadUri(spotifyUri(it.ref)); return; }
+  withSpotify((api) => api.createController(el.querySelector('.embed-host > div'), { uri: spotifyUri(it.ref), width: '100%', height: '100%' }, (c) => {
+    if (!textEls.has(it.id)) return c.destroy?.();
+    ctrls.set(it.id, c);
+    c.addListener('playback_update', (e) => { el.classList.toggle('playing', !e.data.isPaused && !e.data.isBuffering); musicSync(); });
+  }));
+}
+const musicSync = () => $('#music-btn').classList.toggle('playing', !!document.querySelector('.embed.playing'));
+const activePlayer = () => { const sel = [...selection].find((id) => items.get(id)?.kind === 'embed'); return sel || [...items.values()].filter((i) => i.kind === 'embed').sort((a, b) => b.t - a.t)[0]?.id; };
+const savedMusic = () => { try { return JSON.parse(localStorage.getItem('sl8:music')) || []; } catch { return []; } };
+const saveMusic = (ref, name) => { try { localStorage.setItem('sl8:music', JSON.stringify([{ ref, name }, ...savedMusic().filter((m) => m.ref !== ref)].slice(0, 30))); } catch {} };
+function playLink(ref, name) {
+  saveMusic(ref, name);
+  const id = activePlayer(), it = id && items.get(id);
+  if (it) commit([{ id, before: it, after: { ...it, ref } }]);
+  else {
+    const [x, y] = toWorld(board.clientWidth / 2 - 180 * cam.z, board.clientHeight * 0.35);
+    const small = /^(track|episode)/.test(ref), e = { id: crypto.randomUUID(), kind: 'embed', t: Date.now(), x: Math.round(x), y: Math.round(y), w: 360, h: small ? 178 : 378, ref };
+    commit([{ id: e.id, before: null, after: e }]);
+    setSelection([e.id]);
+  }
+  setTimeout(() => ctrls.get(activePlayer())?.play?.(), 600);
+  renderMusicList();
+}
+function renderMusicList() {
+  $('#music-list').replaceChildren(...savedMusic().map((m) => {
+    const li = document.createElement('li'), b = document.createElement('button');
+    b.type = 'button'; b.textContent = m.name || m.ref; b.onclick = () => playLink(m.ref, m.name);
+    li.append(b); return li;
+  }));
+}
+$('#music-btn').onclick = () => { closeMenu(); renderMusicList(); $('#music-menu').hidden = !$('#music-menu').hidden; if (!$('#music-menu').hidden) $('#music-link').focus(); };
+$('#music-toggle').onclick = () => { const c = ctrls.get(activePlayer()); if (c) c.togglePlay(); else toast('Add a Spotify link first.'); };
+$('#music-new').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const ref = parseSpotify($('#music-link').value);
+  if (!ref) return toast("That doesn't look like a Spotify link.");
+  $('#music-link').value = '';
+  let name = '';
+  try { name = (await (await fetch('https://open.spotify.com/oembed?url=' + encodeURIComponent('https://open.spotify.com/' + ref))).json()).title || ''; } catch {}
+  playLink(ref, name);
+});
+addEventListener('pointerdown', (e) => { if (!$('#music-menu').hidden && !e.target.closest?.('#music-menu, #music-btn')) $('#music-menu').hidden = true; }, true);
 
 /* ---------- adding portals ---------- */
 function closePortalMenu() { $('#portal-menu').hidden = true; }
