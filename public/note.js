@@ -633,7 +633,7 @@ function renderText(it) {
 function makeTextEl(id) {
   const el = document.createElement('div');
   el.className = 'tb';
-  el.innerHTML = '<div class="tb-bar"><button type="button" class="tb-move" aria-label="Drag to move">Move</button><button type="button" class="tb-del" aria-label="Delete text box">Delete</button></div><textarea rows="1" aria-label="Text"></textarea>';
+  el.innerHTML = '<div class="tb-bar"><button type="button" class="tb-move" aria-label="Drag to move">Move</button><button type="button" class="tb-list" aria-label="Make a checklist">☐ List</button><button type="button" class="tb-del" aria-label="Delete text box">Delete</button></div><textarea rows="1" aria-label="Text"></textarea>';
   const ta = el.querySelector('textarea');
   let before = null; // the item as it was when editing started; null for a brand-new box
 
@@ -660,6 +660,37 @@ function makeTextEl(id) {
       redoStack = [];
       updateUndo();
     }
+  });
+  // checklists: lines that start with ☐ or ☑. Tap the box to tick it; Enter continues the list; "[] " or "- [ ] " at the start of a line makes one.
+  const BOX = /^(☐|☑) /;
+  const edit = (fn) => { fn(); ta.dispatchEvent(new Event('input', { bubbles: true })); };
+  const lineAt = (pos) => { const a = ta.value.lastIndexOf('\n', pos - 1) + 1, b = ta.value.indexOf('\n', pos); return [a, b < 0 ? ta.value.length : b]; };
+  ta.addEventListener('click', () => {
+    if (ta.selectionStart !== ta.selectionEnd) return;
+    const pos = ta.selectionStart, [a] = lineAt(pos);
+    if (pos - a > 1 || !BOX.test(ta.value.slice(a, a + 2))) return;
+    edit(() => { ta.setRangeText(ta.value[a] === '☐' ? '☑' : '☐', a, a + 1, 'preserve'); ta.setSelectionRange(a + 2, a + 2); });
+  });
+  ta.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter' || e.shiftKey || e.isComposing || ta.selectionStart !== ta.selectionEnd) return;
+    const pos = ta.selectionStart, [a, b] = lineAt(pos), line = ta.value.slice(a, b);
+    if (!BOX.test(line)) return;
+    e.preventDefault();
+    if (line.length <= 2) edit(() => { ta.setRangeText('', a, b, 'end'); }); // Enter on an empty item ends the list
+    else edit(() => { ta.setRangeText('\n☐ ', pos, pos, 'end'); });
+  });
+  ta.addEventListener('beforeinput', (e) => { // "[] " typed at the start of a line
+    if (e.data !== ' ') return;
+    const pos = ta.selectionStart, [a] = lineAt(pos), m = ta.value.slice(a, pos).match(/^(?:[-*] )?\[( |x)?\]$/);
+    if (!m) return;
+    e.preventDefault();
+    edit(() => { ta.setRangeText('☐ ', a, pos, 'end'); });
+  });
+  el.querySelector('.tb-list').addEventListener('click', () => { // box on every selected line, or take them off if they all have one
+    const [a] = lineAt(ta.selectionStart), [, b] = lineAt(ta.selectionEnd), lines = ta.value.slice(a, b).split('\n');
+    const all = lines.every((l) => BOX.test(l));
+    edit(() => { ta.setRangeText(lines.map((l) => (all ? l.replace(BOX, '') : BOX.test(l) ? l : '☐ ' + l)).join('\n'), a, b, 'end'); });
+    ta.focus();
   });
   let resizeTimer;
   new ResizeObserver(() => {
@@ -718,6 +749,33 @@ function makeTextEl(id) {
   textEls.set(id, el);
   return el;
 }
+// Tap a checklist box on the canvas (no need to start editing): find which line was tapped by laying the text out in a hidden copy.
+function boxAt(it, x, y) {
+  const ta = textEls.get(it.id)?.querySelector('textarea');
+  if (!ta || !/(^|\n)[☐☑] /.test(it.text)) return null;
+  const cs = getComputedStyle(ta), mirror = document.createElement('div');
+  for (const k of ['font', 'letterSpacing', 'lineHeight', 'paddingLeft', 'paddingTop', 'paddingRight', 'paddingBottom', 'borderLeftWidth', 'borderTopWidth', 'borderStyle', 'boxSizing', 'wordBreak', 'overflowWrap']) mirror.style[k] = cs[k];
+  Object.assign(mirror.style, { position: 'absolute', visibility: 'hidden', width: ta.clientWidth + parseFloat(cs.borderLeftWidth) * 2 + 'px', whiteSpace: 'pre-wrap', left: '0', top: '0' });
+  const rows = it.text.split('\n').map((l) => { const d = document.createElement('div'); d.textContent = l || '\u200b'; mirror.append(d); return d; });
+  textsEl.append(mirror);
+  const rel = y - it.y, hit = rows.findIndex((d) => rel >= d.offsetTop && rel < d.offsetTop + d.offsetHeight);
+  mirror.remove();
+  const line = it.text.split('\n')[hit];
+  return hit >= 0 && /^[☐☑] /.test(line) && x - it.x <= parseFloat(cs.paddingLeft) + it.s * 1.6 ? hit : null;
+}
+function toggleBox(it, row) {
+  const lines = it.text.split('\n');
+  lines[row] = (lines[row][0] === '☐' ? '☑' : '☐') + lines[row].slice(1);
+  commit([{ id: it.id, before: it, after: { ...it, text: lines.join('\n') } }]);
+}
+let tapStart = null;
+board.addEventListener('pointerdown', (e) => { tapStart = { x: e.clientX, y: e.clientY, t: Date.now() }; }, true);
+board.addEventListener('pointerup', (e) => {
+  if (!tapStart || tool.name !== 'select' || document.activeElement?.closest?.('.tb') || Math.hypot(e.clientX - tapStart.x, e.clientY - tapStart.y) > 6 || Date.now() - tapStart.t > 500) return;
+  const [x, y] = toWorld(e.clientX, e.clientY), hit = hitItem(x, y), row = hit?.kind === 'text' ? boxAt(hit, x, y) : null;
+  if (row !== null) toggleBox(hit, row);
+});
+
 const outside = () => toast('Only the highlighted squares are shared with you. Write inside them.');
 function newText(wx, wy) {
   if (!canWrite(wx, wy)) return outside();
