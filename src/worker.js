@@ -1,5 +1,6 @@
 // ThinkSL8 API: email/password accounts, per-user canvases (stored as "notes"), each a set of items, plus AI (src/ai.js).
 import { aiRoutes } from './ai.js';
+import { EMBEDS } from '../public/embeds.js';
 import { canSendMail, sendMail, resetEmail, verifyEmail } from './mail.js';
 
 const OLD_HOSTS = new Set(['sl8.nastaliq.co']); // still served; reset links from it point at thinksl8.com
@@ -142,7 +143,7 @@ function validItem(it) {
   if (it.kind === 'stroke' || it.kind === 'text') return true;
   if (it.kind === 'conn') return isId(it.a) && isId(it.b); // arrow from item a to item b
   if (it.kind === 'portal') return isId(it.target); // card that opens another canvas
-  if (it.kind === 'embed') return /^(track|album|playlist|artist|episode|show)\/[A-Za-z0-9]{22}$/.test(it.ref) && [it.x, it.y, it.w, it.h].every(Number.isFinite) && it.w > 0 && it.h > 0; // a Spotify player
+  if (it.kind === 'embed') return !!EMBEDS[it.service || 'spotify']?.valid.test(it.ref) && [it.x, it.y, it.w, it.h].every(Number.isFinite) && it.w > 0 && it.h > 0; // a player from the embeds list
   if (it.kind === 'image' || it.kind === 'video') { // a photo or video placed on the canvas, from /api/files
     return FILE_ID.test(it.file) && [it.x, it.y, it.w, it.h].every(Number.isFinite) && it.w > 0 && it.h > 0;
   }

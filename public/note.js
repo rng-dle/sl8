@@ -1634,10 +1634,9 @@ $('#c-image').onchange = async (e) => {
   }
 };
 
-/* ---------- music: Spotify players on the canvas, controlled from the ring ---------- */
-const ctrls = new Map(); // embed id -> Spotify iFrame API controller
-const SPOTIFY = /(?:open\.spotify\.com\/(?:intl-[a-z]+\/)?|spotify:)(track|album|playlist|artist|episode|show)[/:]([A-Za-z0-9]{22})/;
-const parseSpotify = (text) => { const m = String(text).match(SPOTIFY); return m ? `${m[1]}/${m[2]}` : null; };
+/* ---------- embeds: players and documents from other services on the canvas (list in /embeds.js); music is controlled from the ring ---------- */
+let EMBEDS, parseEmbed;
+const ctrls = new Map(); // embed id -> Spotify iFrame API controller (the only service with a control API)
 let spotifyApi = null;
 const withSpotify = (fn) => {
   if (spotifyApi) return fn(spotifyApi);
@@ -1650,11 +1649,14 @@ const withSpotify = (fn) => {
 };
 const spotifyUri = (ref) => 'spotify:' + ref.replace('/', ':');
 function renderEmbed(it) {
+  const service = it.service || 'spotify', def = EMBEDS[service];
+  if (!def) return;
   let el = textEls.get(it.id);
   if (!el) {
     el = document.createElement('div');
     el.className = 'embed';
-    el.innerHTML = '<div class="embed-bar"><span>Spotify</span><button type="button" class="embed-use" aria-pressed="false">Use</button></div><div class="embed-host"><div></div></div>';
+    el.innerHTML = '<div class="embed-bar"><span></span><button type="button" class="embed-use" aria-pressed="false">Use</button></div><div class="embed-host"><div></div></div>';
+    el.querySelector('span').textContent = def.label;
     el.querySelector('.embed-use').addEventListener('click', () => { setSelection([it.id]); el.classList.toggle('live'); });
     textsEl.append(el);
     textEls.set(it.id, el);
@@ -1664,6 +1666,13 @@ function renderEmbed(it) {
   if (el._ref === it.ref) return;
   const first = !el._ref;
   el._ref = it.ref;
+  if (service !== 'spotify') {
+    const host = el.querySelector('.embed-host');
+    let f = host.querySelector('iframe');
+    if (!f) { f = document.createElement('iframe'); f.loading = 'lazy'; f.allow = 'autoplay; encrypted-media; fullscreen; clipboard-write; picture-in-picture'; f.referrerPolicy = 'strict-origin-when-cross-origin'; f.title = def.label; host.replaceChildren(f); }
+    f.src = def.src(it.ref, location.hostname);
+    return;
+  }
   if (!first) { ctrls.get(it.id)?.loadUri(spotifyUri(it.ref)); return; }
   withSpotify((api) => api.createController(el.querySelector('.embed-host > div'), { uri: spotifyUri(it.ref), width: '100%', height: '100%' }, (c) => {
     if (!textEls.has(it.id)) return c.destroy?.();
@@ -1672,39 +1681,40 @@ function renderEmbed(it) {
   }));
 }
 const musicSync = () => $('#music-btn').classList.toggle('playing', !!document.querySelector('.embed.playing'));
-const activePlayer = () => { const sel = [...selection].find((id) => items.get(id)?.kind === 'embed'); return sel || [...items.values()].filter((i) => i.kind === 'embed').sort((a, b) => b.t - a.t)[0]?.id; };
+const activeSpotify = () => { const mine = [...items.values()].filter((i) => i.kind === 'embed' && (i.service || 'spotify') === 'spotify'); return (mine.find((i) => selection.has(i.id)) || mine.sort((a, b) => b.t - a.t)[0])?.id; };
 const savedMusic = () => { try { return JSON.parse(localStorage.getItem('sl8:music')) || []; } catch { return []; } };
-const saveMusic = (ref, name) => { try { localStorage.setItem('sl8:music', JSON.stringify([{ ref, name }, ...savedMusic().filter((m) => m.ref !== ref)].slice(0, 30))); } catch {} };
-function playLink(ref, name) {
-  saveMusic(ref, name);
-  const id = activePlayer(), it = id && items.get(id);
+const saveMusic = (service, ref, name) => { try { localStorage.setItem('sl8:music', JSON.stringify([{ service, ref, name }, ...savedMusic().filter((m) => m.ref !== ref)].slice(0, 30))); } catch {} };
+function playLink(service, ref, name) {
+  saveMusic(service, ref, name);
+  const id = service === 'spotify' && activeSpotify(), it = id && items.get(id); // a new song goes into the Spotify player you already have
   if (it) commit([{ id, before: it, after: { ...it, ref } }]);
   else {
-    const [x, y] = toWorld(board.clientWidth / 2 - 180 * cam.z, board.clientHeight * 0.35);
-    const small = /^(track|episode)/.test(ref), e = { id: crypto.randomUUID(), kind: 'embed', t: Date.now(), x: Math.round(x), y: Math.round(y), w: 360, h: small ? 178 : 378, ref };
+    const [pw, ph] = EMBEDS[service].size(ref), w = pw, h = ph + 26;
+    const [x, y] = toWorld(board.clientWidth / 2 - w / 2 * cam.z, board.clientHeight * 0.3);
+    const e = { id: crypto.randomUUID(), kind: 'embed', service, t: Date.now(), x: Math.round(x), y: Math.round(y), w, h, ref };
     commit([{ id: e.id, before: null, after: e }]);
     setSelection([e.id]);
   }
-  setTimeout(() => ctrls.get(activePlayer())?.play?.(), 600);
+  if (service === 'spotify') setTimeout(() => ctrls.get(activeSpotify())?.play?.(), 600);
   renderMusicList();
 }
 function renderMusicList() {
-  $('#music-list').replaceChildren(...savedMusic().map((m) => {
-    const li = document.createElement('li'), b = document.createElement('button');
-    b.type = 'button'; b.textContent = m.name || m.ref; b.onclick = () => playLink(m.ref, m.name);
+  $('#music-list').replaceChildren(...savedMusic().filter((m) => EMBEDS[m.service || 'spotify']).map((m) => {
+    const svc = m.service || 'spotify', li = document.createElement('li'), b = document.createElement('button');
+    b.type = 'button'; b.textContent = m.name || `${EMBEDS[svc].label}: ${m.ref.slice(0, 40)}`; b.onclick = () => playLink(svc, m.ref, m.name);
     li.append(b); return li;
   }));
 }
 $('#music-btn').onclick = () => { closeMenu(); renderMusicList(); $('#music-menu').hidden = !$('#music-menu').hidden; if (!$('#music-menu').hidden) $('#music-link').focus(); };
-$('#music-toggle').onclick = () => { const c = ctrls.get(activePlayer()); if (c) c.togglePlay(); else toast('Add a Spotify link first.'); };
+$('#music-toggle').onclick = () => { const c = ctrls.get(activeSpotify()); if (c) c.togglePlay(); else toast('Add a Spotify link first.'); };
 $('#music-new').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const ref = parseSpotify($('#music-link').value);
-  if (!ref) return toast("That doesn't look like a Spotify link.");
+  const link = $('#music-link').value, found = parseEmbed(link);
+  if (!found) return toast(/pinterest\.com\/[^/]+\/[^/]+/.test(link) ? 'Pinterest boards can\'t be embedded yet; paste a single pin.' : "I can't embed that link. Try Spotify, YouTube, Google Docs, Figma and the others in the list.");
   $('#music-link').value = '';
   let name = '';
-  try { name = (await (await fetch('https://open.spotify.com/oembed?url=' + encodeURIComponent('https://open.spotify.com/' + ref))).json()).title || ''; } catch {}
-  playLink(ref, name);
+  if (found.service === 'spotify') try { name = (await (await fetch('https://open.spotify.com/oembed?url=' + encodeURIComponent('https://open.spotify.com/' + found.ref))).json()).title || ''; } catch {}
+  playLink(found.service, found.ref, name);
 });
 addEventListener('pointerdown', (e) => { if (!$('#music-menu').hidden && !e.target.closest?.('#music-menu, #music-btn')) $('#music-menu').hidden = true; }, true);
 
@@ -2035,6 +2045,7 @@ function reveal() {
 
 /* ---------- start ---------- */
 async function start() {
+  ({ EMBEDS, parseEmbed } = await import('/embeds.js'));
   if (!noteId && !shareToken) { location.replace('/'); return; }
   reveal();
   readPalette();

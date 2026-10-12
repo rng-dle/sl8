@@ -355,13 +355,13 @@
 </div>
 
 <div id="music-menu" class="menu" hidden role="dialog" aria-label="Music">
-  <h3>Music</h3>
+  <h3>Music and embeds</h3>
   <button class="btn primary" type="button" id="music-toggle">Play / pause</button>
   <form id="music-new" class="row">
-    <input id="music-link" class="title-input" style="flex:1;box-shadow:none;border:1px solid var(--line);font-size:16px" placeholder="Paste a Spotify link" maxlength="300" aria-label="Spotify link">
+    <input id="music-link" class="title-input" style="flex:1;box-shadow:none;border:1px solid var(--line);font-size:16px" placeholder="Paste a link" maxlength="300" aria-label="Link to embed">
     <button class="btn primary" type="submit">Add</button>
   </form>
-  <p class="help sub" style="margin:0;font-size:13px;color:var(--muted)">Adds a player to the canvas, or switches the one you're using. Full songs play when you're logged in to Spotify in this browser. Saved on this device:</p>
+  <p class="help sub" style="margin:0;font-size:13px;color:var(--muted)">Spotify, YouTube, SoundCloud, Apple Music, Twitch, TikTok, Google Docs, Sheets, Slides, Drive, Forms, Maps and Calendar, Figma, Canva or a Pinterest pin. Spotify links switch the player you already have. Where a service asks you to log in, it uses your login in this browser. Saved on this device:</p>
   <ul class="music-list" id="music-list"></ul>
 </div>
 
@@ -453,7 +453,7 @@
     <button class="icon-btn" data-tool="connect" aria-label="Connect (C)" title="Connect (C): drag from one note to another, or into empty space for a new linked note"><svg viewBox="0 0 24 24"><circle cx="5.5" cy="18.5" r="2.5"/><circle cx="18.5" cy="5.5" r="2.5"/><path d="M7.5 16.5 16.5 7.5"/><path d="M11 7.5h5.5V13"/></svg></button>
     <button class="icon-btn" data-tool="hand" aria-label="Move around (Space)" title="Move around (hold Space)"><svg viewBox="0 0 24 24"><path d="m5 9-3 3 3 3"/><path d="m9 5 3-3 3 3"/><path d="m15 19-3 3-3-3"/><path d="m19 9 3 3-3 3"/><path d="M2 12h20"/><path d="M12 2v20"/></svg></button>
     <button class="icon-btn" id="media-add" aria-label="Add a photo or video" title="Add a photo or video (or paste, or drop a file)"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg></button>
-    <button class="icon-btn" id="music-btn" aria-label="Music (Spotify)" title="Music: Spotify players, play and pause, switch songs"><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></button>
+    <button class="icon-btn" id="music-btn" aria-label="Music and embeds" title="Music and embeds: Spotify, YouTube, Google Docs and more"><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></button>
     <input type="file" id="media-file" accept="image/*,video/*" multiple hidden>
     <span class="sep"></span>
     <button class="icon-btn" id="undo" aria-label="Undo" title="Undo (Ctrl+Z)" disabled><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>

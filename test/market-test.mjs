@@ -90,7 +90,7 @@ ok((await user.json(`/api/market/${tplId}/use`, { method: 'POST' })).status === 
 // a Spotify player is kept; anything that isn't a plain Spotify reference is refused
 const { body: { note: music } } = await author.json('/api/notes', { method: 'POST', body: { title: 'Music' } });
 await author.json(`/api/notes/${music.id}/ops`, { method: 'POST', body: { ops: [{ put: { id: 'song', kind: 'embed', t: 1, x: 0, y: 0, w: 360, h: 178, ref: `track/${'a'.repeat(22)}` } }] } });
-await author.json(`/api/notes/${music.id}/ops`, { method: 'POST', body: { ops: [{ put: { id: 'evil', kind: 'embed', t: 2, x: 0, y: 0, w: 360, h: 178, ref: 'track/../../x' } }] } });
+await author.json(`/api/notes/${music.id}/ops`, { method: 'POST', body: { ops: [{ put: { id: 'evil', kind: 'embed', service: 'youtube', t: 2, x: 0, y: 0, w: 360, h: 178, ref: 'v/../../x' } }] } });
 const kept = (await author.json(`/api/notes/${music.id}`)).body.items.map((it) => it.id);
 ok(kept.includes('song') && !kept.includes('evil'), 'a Spotify player is saved and a bad reference is refused', JSON.stringify(kept));
 
