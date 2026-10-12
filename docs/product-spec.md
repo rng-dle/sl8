@@ -9,7 +9,7 @@ Decisions Josh made, grouped by area. "Flag" marks a decision that conflicts wit
 - Feel: calm by default, but look, feel and tone are user-configurable (a core principle).
 
 ## 2. Canvas objects
-- Add: checklists/tasks, link cards, files and PDFs, code/tables/embeds from an allowlist of services such as Spotify and YouTube (on top of text, drawing, arrows, portals, images, video).
+- Add: checklists/tasks, link cards, files and PDFs, code/tables/embeds from an allowlist; starter set of 17: Spotify, YouTube Music, SoundCloud, Apple Music, YouTube, Twitch, TikTok, Google Docs/Sheets/Slides/Drive/Maps/Calendar/Forms, Figma, Canva, Pinterest (TikTok and Pinterest last) (on top of text, drawing, arrows, portals, images, video).
 - Text: Markdown source that renders however the user prefers, if it makes work faster.
 - Grouping: groups, frames/regions, tags, and plain proximity all supported.
 - Arrows: labelled, with relationship presets (inspires, depends on, supports...).
