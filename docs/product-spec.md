@@ -9,7 +9,7 @@ Decisions Josh made, grouped by area. "Flag" marks a decision that conflicts wit
 - Feel: calm by default, but look, feel and tone are user-configurable (a core principle).
 
 ## 2. Canvas objects
-- Add: checklists/tasks, link cards, files and PDFs, code/tables/embeds (on top of text, drawing, arrows, portals, images, video).
+- Add: checklists/tasks, link cards, files and PDFs, code/tables/embeds from an allowlist of services such as Spotify and YouTube (on top of text, drawing, arrows, portals, images, video).
 - Text: Markdown source that renders however the user prefers, if it makes work faster.
 - Grouping: groups, frames/regions, tags, and plain proximity all supported.
 - Arrows: labelled, with relationship presets (inspires, depends on, supports...).
@@ -19,6 +19,7 @@ Decisions Josh made, grouped by area. "Flag" marks a decision that conflicts wit
 - Landing place: the user picks a default.
 - Input that must feel excellent: S Pen/stylus handwriting, voice notes, keyboard-only speed, touch gestures.
 - Target: instant capture, even offline.
+- Voice notes: record in the browser, play back on the canvas, transcribe through the user's AI or the browser; build right after the quick wins.
 
 ## 4. Organizing and finding
 - Archive: timeline view with type/date/canvas filters.
