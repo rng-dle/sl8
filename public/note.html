@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
 <title>Canvas · ThinkSL8</title>
 <script>try{var t=JSON.parse(localStorage.getItem('sl8:theme'));if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<script>try{if(sessionStorage.getItem('sl8:reveal')&&JSON.parse(localStorage.getItem('sl8:revealMode')||'"full"')!=='off'&&!matchMedia('(prefers-reduced-motion: reduce)').matches){var h=document.documentElement,c=JSON.parse(localStorage.getItem('sl8:logo'));if(c&&/^#[0-9a-f]{6}$/i.test(c.bg))h.style.setProperty('--logo-bg',c.bg);h.classList.add('opening');setTimeout(function(){h.classList.remove('opening')},4000)}}catch(e){}</script>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -255,6 +256,7 @@
   #ai-q:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
   .ai-note { margin: 0; font-size: 12px; color: var(--muted); }
 
+  html.opening::after { content: ''; position: fixed; inset: 0; z-index: 99; background: var(--logo-bg, #0a2b48); } /* covers the canvas until the opening page is up */
   /* the opening: a page in the logo colours (navy and sky unless changed in Settings) with the 8 on it, torn in two along a ragged line */
   .reveal { position: fixed; inset: 0; z-index: 100; color: var(--logo-fg, #78d1f9); touch-action: none; user-select: none; -webkit-user-select: none; }
   .reveal.torn { pointer-events: none; }

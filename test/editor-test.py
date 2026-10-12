@@ -20,6 +20,8 @@ j(f'/api/notes/{n2}/ops', 'POST', {'ops': [{'put': {'id': 'a', 'kind': 'text', '
 with sync_playwright() as p:
     b = p.chromium.launch(); ctx = b.new_context(viewport={'width': 1000, 'height': 700})
     ctx.add_cookies([{'name': k, 'value': v, 'url': B} for k, v in jar.items()])
+    pg0 = ctx.new_page(); pg0.add_init_script("sessionStorage.setItem('sl8:reveal','1')"); pg0.goto(f'{B}/note?id={n}', wait_until='commit')
+    ok(pg0.evaluate("getComputedStyle(document.documentElement, '::after').position") == 'fixed' or pg0.evaluate("!!document.querySelector('.reveal')"), 'the opening cover is up before the canvas can show'); pg0.close()
     pg = ctx.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
     pg.goto(f'{B}/note?id={n}'); pg.wait_for_timeout(1500)
     pc = lambda t: pg.evaluate('t => parseColor(t)', t)
@@ -27,6 +29,9 @@ with sync_playwright() as p:
     ok(pc('rgb(217, 102, 27)') == '#d9661b' and pc('217 102 27') == '#d9661b', 'RGB, with or without rgb()')
     ok(pc('hsl(24, 78%, 48%)') in ('#da661b', '#d9661b', '#da671b', '#d9671b'), 'HSL: ' + str(pc('hsl(24, 78%, 48%)')))
     ok(pc('hsl(0, 100%, 50%)') == '#ff0000' and pc('rubbish') is None and pc('rgb(1,2)') is None, 'red is red; nonsense is refused')
+    z = lambda r: pg.evaluate("r => { localStorage.setItem('sl8:zoomRange', JSON.stringify(r)); return [clampZ(1e-6), clampZ(1e6)] }", r)
+    ok(z('1') == [0.1, 8] and z('2') == [0.05, 16] and z('4') == [0.025, 32], 'zoom range: standard, wide, widest')
+    ok(pg.evaluate("localStorage.removeItem('sl8:zoomRange'), clampZ(1e6)") == 32, 'zoom defaults to the widest range')
     ok(pg.evaluate('COLORS.length') == 10 and pg.evaluate("getComputedStyle(document.documentElement).getPropertyValue('--ink-brown').trim()") != '', 'ten named colours, brown included')
     ok(pg.locator('#conn-presets option').count() >= 8, 'arrow label suggestions exist')
     ok(pg.locator('#hint').is_visible(), 'the empty-canvas hint shows by default')

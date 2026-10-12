@@ -407,8 +407,10 @@ function camChanged() {
   clearTimeout(camSaveTimer);
   camSaveTimer = setTimeout(() => store.set('sl8:cam:' + canvasKey, cam), 400);
 }
+// zoom range (Settings): 1x is 10% to 800%; 2x and 4x (the default) go that much further each way
+const clampZ = (z) => { const k = { 1: 1, 2: 2, 4: 4 }[store.get('sl8:zoomRange')] || 4; return Math.min(8 * k, Math.max(0.1 / k, z)); };
 function zoomAt(sx, sy, factor) {
-  const z = Math.min(16, Math.max(0.05, cam.z * factor));
+  const z = clampZ(cam.z * factor);
   const wx = (sx - cam.x) / cam.z, wy = (sy - cam.y) / cam.z;
   cam = { x: sx - wx * z, y: sy - wy * z, z };
   camChanged();
@@ -1194,7 +1196,7 @@ function onMove(e) {
     if (t.length < 2) return;
     const [a, b] = t;
     const { cam0, d0, mx, my } = gesture;
-    const z = Math.min(16, Math.max(0.05, cam0.z * Math.hypot(a.x - b.x, a.y - b.y) / d0));
+    const z = clampZ(cam0.z * Math.hypot(a.x - b.x, a.y - b.y) / d0);
     const wx = (mx - cam0.x) / cam0.z, wy = (my - cam0.y) / cam0.z;
     const nx = (a.x + b.x) / 2, ny = (a.y + b.y) / 2;
     cam = { x: nx - wx * z, y: ny - wy * z, z };
@@ -2214,9 +2216,10 @@ function reveal() {
 
 /* ---------- start ---------- */
 async function start() {
-  ({ EMBEDS, parseEmbed } = await import('/embeds.js'));
   if (!noteId && !shareToken) { location.replace('/'); return; }
   reveal();
+  document.documentElement.classList.remove('opening');
+  ({ EMBEDS, parseEmbed } = await import('/embeds.js'));
   readPalette();
   matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { readPalette(); schedule(true); });
   new MutationObserver(() => { readPalette(); schedule(true); }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });

@@ -155,6 +155,14 @@
       </div>
       <p class="help sub">The short tips on an empty canvas. Turn them off and they stay off. The tour is always there under ⋯ &gt; Show me around.</p>
     </div>
+    <div class="pref"><h3>Zoom range</h3>
+      <div class="seg" role="radiogroup" aria-label="Zoom range">
+        <label><input type="radio" name="zr" value="1"><span>Standard</span></label>
+        <label><input type="radio" name="zr" value="2"><span>Wide</span></label>
+        <label><input type="radio" name="zr" value="4"><span>Widest</span></label>
+      </div>
+      <p class="help sub">How far you can zoom out and in. Standard is 10% to 800%, Wide doubles that each way, Widest quadruples it (2.5% to 3200%).</p>
+    </div>
     <div class="pref" id="minimap"><h3>Minimap</h3>
       <div class="seg" role="radiogroup" aria-label="Minimap">
         <label><input type="radio" name="mm" value="on"><span>On</span></label>
@@ -385,6 +393,7 @@ bindPref('toolbar', 'sl8:toolbar', 'ring');
 bindPref('hints', 'sl8:hints', 'on');
 // minimap (this device): on or off, one of 20 shapes, and your own border and background colours
 bindPref('mm', 'sl8:minimap', 'on');
+bindPref('zr', 'sl8:zoomRange', '4');
 (() => {
   const box = $('#mm-shapes'), cur = () => store.get('sl8:mmShape') || 'rounded';
   const paint = () => {
