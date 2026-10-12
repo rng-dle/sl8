@@ -796,14 +796,18 @@ function drawMinimap() {
   const [vx0, vy0] = toWorld(0, 0), [vx1, vy1] = toWorld(board.clientWidth, board.clientHeight);
   let x0 = vx0, y0 = vy0, x1 = vx1, y1 = vy1;
   for (const r of rects) { x0 = Math.min(x0, r.x0); y0 = Math.min(y0, r.y0); x1 = Math.max(x1, r.x1); y1 = Math.max(y1, r.y1); }
-  const padX = (x1 - x0) * 0.06 || 1, padY = (y1 - y0) * 0.06 || 1;
+  const padX = (x1 - x0) * 0.04 || 1, padY = (y1 - y0) * 0.04 || 1;
   x0 -= padX; y0 -= padY; x1 += padX; y1 += padY;
-  const W = mm.width, H = mm.height, shape = store.get('sl8:mmShape') || 'rounded', inset = MM_INSET[shape] ?? 0.05;
-  const ix = W * inset, iy = H * inset, iw = W - 2 * ix, ih = H - 2 * iy;
+  const shape = MM_ASPECT[store.get('sl8:mmShape')] ? store.get('sl8:mmShape') : 'rounded', [cw, ch] = mmSize(shape), scale = innerWidth <= 640 ? 0.75 : 1;
+  const wantW = Math.round(cw * scale * 2), wantH = Math.round(ch * scale * 2);
+  if (mm.width !== wantW || mm.height !== wantH) { mm.width = wantW; mm.height = wantH; mm.style.width = wantW / 2 + 'px'; mm.style.height = wantH / 2 + 'px'; }
+  const W = mm.width, H = mm.height, [bl, bt, br, bb] = MM_BOX[shape];
+  const ix = W * bl, iy = H * bt, iw = W * (br - bl), ih = H * (bb - bt);
   const k = Math.min(iw / (x1 - x0), ih / (y1 - y0)), ox = ix + (iw - (x1 - x0) * k) / 2, oy = iy + (ih - (y1 - y0) * k) / 2;
   mmView = { x0, y0, k, ox, oy };
   mm.hidden = false;
-  const cs = getComputedStyle(document.documentElement), path = mmShapePath = mmPath(shape, W, H);
+  const cs = getComputedStyle(document.documentElement), path = mmShapePath = new Path2D(); // drawn 4px in from the edge so the border isn't clipped
+  path.addPath(mmPath(shape, W - 8, H - 8), new DOMMatrix().translate(4, 4));
   mmx.clearRect(0, 0, W, H);
   mmx.globalAlpha = store.get('sl8:mmBg') ? 1 : 0.9;
   mmx.fillStyle = store.get('sl8:mmBg') || cs.getPropertyValue('--surface').trim() || '#fff';

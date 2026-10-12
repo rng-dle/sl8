@@ -27,7 +27,11 @@ function mmPath(name, w, h) {
     case 'octagon': poly([[0.3, 0], [0.7, 0], [1, 0.3], [1, 0.7], [0.7, 1], [0.3, 1], [0, 0.7], [0, 0.3]]); break;
     case 'pentagon': poly([[0.5, 0], [1, 0.38], [0.81, 1], [0.19, 1], [0, 0.38]]); break;
     case 'triangle': poly([[0.5, 0], [1, 1], [0, 1]]); break;
-    case 'star': poly(Array.from({ length: 10 }, (_, i) => { const a = -Math.PI / 2 + (i * Math.PI) / 5, k = i % 2 ? 0.22 : 0.5; return [0.5 + Math.cos(a) * k, 0.5 + Math.sin(a) * k]; })); break;
+    case 'star': { // a regular five-point star, scaled to fill the box (looks right at about 1.05:1)
+      const pts = Array.from({ length: 10 }, (_, i) => { const a = -Math.PI / 2 + (i * Math.PI) / 5, k = i % 2 ? 0.382 : 1; return [Math.cos(a) * k, Math.sin(a) * k]; });
+      const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]), x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+      poly(pts.map(([x, y]) => [(x - x0) / (x1 - x0), (y - y0) / (y1 - y0)])); break;
+    }
     case 'cross': poly([[0.35, 0], [0.65, 0], [0.65, 0.35], [1, 0.35], [1, 0.65], [0.65, 0.65], [0.65, 1], [0.35, 1], [0.35, 0.65], [0, 0.65], [0, 0.35], [0.35, 0.35]]); break;
     case 'heart':
       p.moveTo(w * 0.5, h * 0.95); p.bezierCurveTo(w * -0.1, h * 0.55, w * 0.05, h * 0.02, w * 0.3, h * 0.05);
@@ -44,5 +48,12 @@ function mmPath(name, w, h) {
   }
   return p;
 }
-// how far in from each edge the map itself sits, as a fraction of the box, so it isn't cut off by the shape
-const MM_INSET = { rect: 0.03, rounded: 0.05, squircle: 0.08, pill: 0.14, ellipse: 0.15, diamond: 0.28, hexagon: 0.14, octagon: 0.12, pentagon: 0.2, triangle: 0.3, star: 0.3, cross: 0.1, heart: 0.2, shield: 0.12, parallelogram: 0.13, trapezoid: 0.12, chevron: 0.13, notched: 0.1, ticket: 0.1, bubble: 0.08 };
+// Width over height each shape is drawn at, so squares stay square and a hexagon, star or triangle keeps its true proportions
+const MM_ASPECT = { rounded: 1.5, rect: 1.5, pill: 1.7, squircle: 1.4, ellipse: 1.4, diamond: 1, hexagon: 1.155, octagon: 1, pentagon: 1.05, triangle: 1.155, star: 1.05, cross: 1, heart: 1.1, shield: 0.9, parallelogram: 1.6, trapezoid: 1.5, chevron: 1.6, notched: 1.5, ticket: 1.6, bubble: 1.4 };
+// the rectangle inside each shape where the map itself is drawn: [left, top, right, bottom] as fractions of the box
+const MM_BOX = { rounded: [.04, .06, .96, .94], rect: [.04, .06, .96, .94], pill: [.12, .1, .88, .9], squircle: [.08, .08, .92, .92], ellipse: [.15, .15, .85, .85],
+  diamond: [.25, .25, .75, .75], hexagon: [.15, .2, .85, .8], octagon: [.15, .15, .85, .85], pentagon: [.2, .4, .8, .92], triangle: [.28, .5, .72, .94],
+  star: [.3, .4, .7, .72], cross: [.06, .37, .94, .63], heart: [.22, .2, .78, .62], shield: [.14, .1, .86, .62], parallelogram: [.22, .1, .78, .9],
+  trapezoid: [.2, .1, .8, .9], chevron: [.28, .1, .72, .9], notched: [.1, .1, .9, .9], ticket: [.12, .08, .88, .92], bubble: [.06, .06, .94, .78] };
+// size in CSS pixels for a shape: the longer side is 150 (wide shapes) or 116 (squarish ones)
+const mmSize = (name) => { const a = MM_ASPECT[name] || 1.5, d = a >= 1.3 || a <= 0.8 ? 150 : 116; return a >= 1 ? [d, Math.round(d / a)] : [Math.round(d * a), d]; };

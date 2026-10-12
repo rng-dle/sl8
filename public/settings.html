@@ -389,10 +389,10 @@ bindPref('mm', 'sl8:minimap', 'on');
   const box = $('#mm-shapes'), cur = () => store.get('sl8:mmShape') || 'rounded';
   const paint = () => {
     for (const b of box.children) {
-      const c = b.querySelector('canvas'), x = c.getContext('2d'), p = mmPath(b.dataset.shape, c.width, c.height);
-      x.clearRect(0, 0, c.width, c.height);
+      const c = b.querySelector('canvas'), x = c.getContext('2d'), a = MM_ASPECT[b.dataset.shape] || 1.5, tw = Math.min(88, 56 * a), th = tw / a, p = mmPath(b.dataset.shape, tw, th);
+      x.clearRect(0, 0, c.width, c.height); x.save(); x.translate((c.width - tw) / 2, (c.height - th) / 2);
       x.fillStyle = store.get('sl8:mmBg') || getComputedStyle(document.documentElement).getPropertyValue('--surface').trim() || '#fff'; x.fill(p);
-      x.lineWidth = 3; x.strokeStyle = store.get('sl8:mmBorder') || getComputedStyle(document.documentElement).getPropertyValue('--muted').trim() || '#888'; x.stroke(p);
+      x.lineWidth = 3; x.strokeStyle = store.get('sl8:mmBorder') || getComputedStyle(document.documentElement).getPropertyValue('--muted').trim() || '#888'; x.stroke(p); x.restore();
       b.setAttribute('aria-checked', String(b.dataset.shape === cur()));
       b.style.outline = b.dataset.shape === cur() ? '3px solid var(--accent)' : '1px solid var(--line)';
     }
