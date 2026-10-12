@@ -408,7 +408,7 @@ function camChanged() {
   camSaveTimer = setTimeout(() => store.set('sl8:cam:' + canvasKey, cam), 400);
 }
 function zoomAt(sx, sy, factor) {
-  const z = Math.min(8, Math.max(0.1, cam.z * factor));
+  const z = Math.min(16, Math.max(0.05, cam.z * factor));
   const wx = (sx - cam.x) / cam.z, wy = (sy - cam.y) / cam.z;
   cam = { x: sx - wx * z, y: sy - wy * z, z };
   camChanged();
