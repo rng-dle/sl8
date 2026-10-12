@@ -67,6 +67,10 @@
   .music-list { margin: 0; padding: 0; list-style: none; display: grid; gap: 2px; max-height: 200px; overflow-y: auto; }
   .music-list button { width: 100%; padding: 8px 10px; border: 0; border-radius: 8px; background: none; text-align: left; font: 600 15px/1.25 var(--font-ui); color: var(--text); }
   .music-list button:hover { background: var(--accent-soft); }
+  /* minimap: the whole canvas in a corner; tap or drag to move there */
+  #minimap { position: fixed; z-index: 12; left: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); width: 148px; height: 100px; border-radius: 12px; touch-action: none; cursor: pointer;
+    background: color-mix(in srgb, var(--surface) 88%, transparent); border: 1px solid var(--line); box-shadow: var(--shadow); }
+  @media (max-width: 640px) { #minimap { width: 108px; height: 74px; } }
   #texts { position: absolute; left: 0; top: 0; transform-origin: 0 0; pointer-events: none; }
   .tb { position: absolute; pointer-events: none; border-radius: 6px; }
   .tb.selected { box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
@@ -293,6 +297,8 @@
   <button class="icon-btn" id="menu-open" aria-label="Canvas options" aria-expanded="false" title="Options"><svg viewBox="0 0 24 24"><circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/></svg></button>
 </header>
 
+<canvas id="minimap" width="296" height="200" hidden aria-label="Minimap: tap to move around the canvas" role="img"></canvas>
+
 <div id="menu" class="menu" hidden>
   <h3>This canvas</h3>
   <div><b>Theme</b>
@@ -337,6 +343,7 @@
   <nav>
     <button type="button" id="share-open">Share…</button>
     <button type="button" id="portal-add">Add a portal…</button>
+    <button type="button" id="minimap-toggle">Minimap</button>
     <button type="button" id="tour-start">Show me around</button>
     <a href="/canvases">All canvases</a>
     <a href="/market">Marketplace</a>

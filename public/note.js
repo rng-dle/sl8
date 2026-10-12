@@ -397,6 +397,7 @@ function schedule(baseToo) {
     if (needBase) { paintBase(); paintView(); }
     if (needLive) paintLive();
     needBase = needLive = false;
+    drawMinimap();
   });
 }
 
@@ -775,6 +776,52 @@ board.addEventListener('pointerup', (e) => {
   const [x, y] = toWorld(e.clientX, e.clientY), hit = hitItem(x, y), row = hit?.kind === 'text' ? boxAt(hit, x, y) : null;
   if (row !== null) toggleBox(hit, row);
 });
+
+/* ---------- minimap ---------- */
+const mm = $('#minimap'), mmx = mm.getContext('2d'), mmRects = new Map(); // id -> { it, r }: bounds are only recomputed when an item changes
+let mmView = null, mmTimer = 0, mmLast = 0;
+const mmOn = () => store.get('sl8:minimap') !== 'off';
+function drawMinimap() {
+  if (!mmOn() || !items.size || !mm) { mm.hidden = true; return; }
+  const now = Date.now();
+  if (now - mmLast < 120) { clearTimeout(mmTimer); mmTimer = setTimeout(drawMinimap, 130); return; }
+  mmLast = now;
+  const rects = [];
+  for (const [id, it] of items) {
+    let c = mmRects.get(id);
+    if (!c || c.it !== it) { c = { it, r: it.kind === 'conn' ? null : itemRect(it) }; mmRects.set(id, c); }
+    if (c.r) rects.push(c.r);
+  }
+  for (const id of mmRects.keys()) if (!items.has(id)) mmRects.delete(id);
+  const [vx0, vy0] = toWorld(0, 0), [vx1, vy1] = toWorld(board.clientWidth, board.clientHeight);
+  let x0 = vx0, y0 = vy0, x1 = vx1, y1 = vy1;
+  for (const r of rects) { x0 = Math.min(x0, r.x0); y0 = Math.min(y0, r.y0); x1 = Math.max(x1, r.x1); y1 = Math.max(y1, r.y1); }
+  const padX = (x1 - x0) * 0.06 || 1, padY = (y1 - y0) * 0.06 || 1;
+  x0 -= padX; y0 -= padY; x1 += padX; y1 += padY;
+  const W = mm.width, H = mm.height, k = Math.min(W / (x1 - x0), H / (y1 - y0)), ox = (W - (x1 - x0) * k) / 2, oy = (H - (y1 - y0) * k) / 2;
+  mmView = { x0, y0, k, ox, oy };
+  // nothing to find when the whole canvas already fits on screen
+  mm.hidden = rects.every((r) => r.x0 >= vx0 && r.x1 <= vx1 && r.y0 >= vy0 && r.y1 <= vy1);
+  if (mm.hidden) return;
+  mmx.clearRect(0, 0, W, H);
+  mmx.fillStyle = palette.text; mmx.globalAlpha = 0.45;
+  for (const r of rects) mmx.fillRect(ox + (r.x0 - x0) * k, oy + (r.y0 - y0) * k, Math.max(2, (r.x1 - r.x0) * k), Math.max(2, (r.y1 - r.y0) * k));
+  mmx.globalAlpha = 1;
+  mmx.strokeStyle = palette.accent; mmx.lineWidth = 3; mmx.fillStyle = palette.accentSoft;
+  const vx = ox + (vx0 - x0) * k, vy = oy + (vy0 - y0) * k, vw = (vx1 - vx0) * k, vh = (vy1 - vy0) * k;
+  mmx.fillRect(vx, vy, vw, vh); mmx.strokeRect(vx, vy, vw, vh);
+}
+function mmJump(e) {
+  if (!mmView) return;
+  const r = mm.getBoundingClientRect(), wx = mmView.x0 + ((e.clientX - r.left) / r.width * mm.width - mmView.ox) / mmView.k, wy = mmView.y0 + ((e.clientY - r.top) / r.height * mm.height - mmView.oy) / mmView.k;
+  cam = { ...cam, x: board.clientWidth / 2 - wx * cam.z, y: board.clientHeight / 2 - wy * cam.z };
+  camChanged();
+}
+mm.addEventListener('pointerdown', (e) => { mm.setPointerCapture(e.pointerId); mmJump(e); });
+mm.addEventListener('pointermove', (e) => { if (e.buttons || e.pointerType === 'touch') mmJump(e); });
+const mmLabel = () => { $('#minimap-toggle').textContent = mmOn() ? 'Hide minimap' : 'Show minimap'; };
+$('#minimap-toggle').onclick = () => { store.set('sl8:minimap', mmOn() ? 'off' : 'on'); mmLabel(); closeMenu(); drawMinimap(); };
+mmLabel();
 
 const outside = () => toast('Only the highlighted squares are shared with you. Write inside them.');
 function newText(wx, wy) {

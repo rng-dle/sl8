@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Saving… · ThinkSL8</title>
+<script>try{var t=JSON.parse(localStorage.getItem('sl8:theme'));if(t)document.documentElement.dataset.theme=t}catch(e){}</script>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="/manifest.webmanifest">
+<meta name="theme-color" content="#0a2b48">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main class="page"><p id="msg" style="margin-top:40vh;text-align:center;color:var(--muted)">Saving to your Inbox…</p></main>
+<script src="/common.js"></script>
+<script>
+// The phone's Share menu opens this page (manifest share_target) with ?title=&text=&url=. The share goes into a canvas called Inbox, below what is already there.
+(async () => {
+  const q = new URLSearchParams(location.search);
+  const parts = [q.get('title'), q.get('text'), q.get('url')].map((s) => (s || '').trim()).filter(Boolean);
+  const text = parts.filter((p, i) => !parts.slice(0, i).some((o) => o.includes(p))).join('\n').slice(0, 5000);
+  try {
+    if (text) localStorage.setItem('sl8:pendingShare', text); // kept while signing in
+    const pending = localStorage.getItem('sl8:pendingShare');
+    if (!pending) return location.replace('/');
+    try { await api('/api/me'); } catch (e) { return location.replace('/?next=/share'); }
+    const { notes } = await api('/api/notes');
+    const inbox = notes.find((n) => n.title === 'Inbox') || (await api('/api/notes', { method: 'POST', body: { title: 'Inbox' } })).note;
+    const { items } = await api(`/api/notes/${inbox.id}`);
+    const y = items.reduce((m, it) => Math.max(m, (it.y ?? 0) + (it.kind === 'text' ? 24 * (1 + (it.text || '').split('\n').length) : it.h || 0)), 0);
+    await api(`/api/notes/${inbox.id}/ops`, { method: 'POST', body: { ops: [{ put: { id: crypto.randomUUID(), kind: 'text', t: Date.now(), x: 0, y: Math.round(items.length ? y + 24 : 0), w: 320, s: 17, c: 'ink', text: pending } }] } });
+    localStorage.removeItem('sl8:pendingShare');
+    location.replace('/note?id=' + encodeURIComponent(inbox.id));
+  } catch (e) {
+    $('#msg').textContent = 'Couldn’t save that: ' + (e.message || 'try again') + '. It’s kept on this device.';
+  }
+})();
+</script>
+</body>
+</html>
