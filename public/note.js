@@ -555,6 +555,9 @@ function updateUndo() {
 
 const pending = new Map(); // id -> item, or null for a delete
 const pendingKey = 'sl8:pending:' + canvasKey;
+// other tabs of this canvas in this browser: every change goes to them at once (see merge for what they keep)
+const tabs = 'BroadcastChannel' in self ? new BroadcastChannel('sl8:' + canvasKey) : null;
+if (tabs) tabs.onmessage = (e) => { const { id, item } = e.data || {}; if (id) item ? merge([item], []) : merge([], [id]); };
 let inflight = null, retryDelay = 0, saveTimer = 0, stopped = false, leaving = false;
 
 function setStatus(text, state = '') {
@@ -566,8 +569,9 @@ function queue(id, item) {
   lastActivity = Date.now();
   pending.set(id, item);
   store.set(pendingKey, [...pending]); // survives a crash or closed tab
+  tabs?.postMessage({ id, item }); // other tabs of this canvas in this browser see it at once
   setStatus('Saving…');
-  scheduleSave(700);
+  scheduleSave(150);
 }
 function scheduleSave(ms) {
   clearTimeout(saveTimer);
@@ -649,13 +653,14 @@ async function resync() {
   const ids = new Set(r.items.map((it) => it.id));
   merge(r.items, [...items.keys()].filter((id) => !ids.has(id)));
 }
-// ponytail: polls every 3 s while visible, slowing down when nothing happens; a Durable Object with WebSockets would make it live
+// Same browser: changes arrive instantly over a BroadcastChannel. Other devices:
+// ponytail: polls every 1 s while visible, slowing down when nothing happens; a Durable Object with WebSockets would make it live
 let since = 0, saves = 0, lastActivity = Date.now(), pollTimer = 0;
 async function poll() {
   clearTimeout(pollTimer);
   if (stopped || !since || document.visibilityState !== 'visible') return;
   const idle = Date.now() - lastActivity;
-  const next = () => { pollTimer = setTimeout(poll, idle < 120e3 ? 3000 : idle < 600e3 ? 10000 : 30000); };
+  const next = () => { pollTimer = setTimeout(poll, idle < 120e3 ? 1000 : idle < 600e3 ? 3000 : 10000); };
   if (inflight) return next();
   const n = saves;
   try {

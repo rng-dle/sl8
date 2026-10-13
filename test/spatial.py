@@ -252,6 +252,13 @@ with sync_playwright() as p:
     w1 = bw(); pg.evaluate("store.set('sl8:toolSize', '1.5'); layoutRing()")
     ok(abs(bw() / w1 - 1.5) < 0.03, "the tool size setting scales the bar")
     pg.evaluate("store.set('sl8:toolSize', null); layoutRing()")
+    # a second tab of the same canvas gets each change at once, without waiting for the server
+    tab2 = ctx.new_page(); tab2.goto(home); tab2.wait_for_selector("#status:text('Saved')")
+    pg.evaluate("commit([{ id: 'tab-test', before: null, after: { id: 'tab-test', kind: 'stroke', t: Date.now(), c: 'ink', w: 3, p: [0, 0, 0.5, 40, 40, 0.5] } }])")
+    try: tab2.wait_for_function("items.has('tab-test')", timeout=400); there = True
+    except Exception: there = False
+    ok(there, "a second tab of the canvas shows a new stroke at once")
+    tab2.close()
 
     # the stretch-and-tear opening on a phone
     m = br.new_context(extra_http_headers=RUN_IP, viewport={"width": 390, "height": 844}, device_scale_factor=2, has_touch=True, is_mobile=True, storage_state=ctx.storage_state())
