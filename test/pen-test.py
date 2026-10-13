@@ -61,6 +61,7 @@ with sync_playwright() as p:
     palm("touchStart", 200, 600)
     for i in range(1, 6):
         palm("touchMove", 200, 600 - i * 20)
+    pg.wait_for_timeout(120)  # hold still before lifting, so the page doesn't coast on
     palm("touchEnd")
     cam2 = pg.evaluate("cam")
 

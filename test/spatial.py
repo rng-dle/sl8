@@ -229,9 +229,25 @@ with sync_playwright() as p:
     # on a PC the hand drags the sheet around; Settings > Tools > Size scales the bar
     pg.goto(home); pg.wait_for_selector("#status:text('Saved')")
     pg.click("[data-tool=hand]"); c0 = pg.evaluate("({...cam})")
-    pg.mouse.move(640, 300); pg.mouse.down(); pg.mouse.move(740, 350, steps=5); pg.mouse.up()
+    pg.mouse.move(640, 300); pg.mouse.down(); pg.mouse.move(740, 350, steps=5); pg.wait_for_timeout(120); pg.mouse.up()
     c1 = pg.evaluate("({...cam})")
     ok(round(c1["x"] - c0["x"]) == 100 and round(c1["y"] - c0["y"]) == 50, "on a PC the hand drags the sheet around", f"{c0} -> {c1}")
+    # smooth motion: a flick coasts on, a mouse wheel's steps glide, zooming glides around the cursor, a heavy canvas slides
+    still = "new Promise(r => { let last = JSON.stringify(cam), n = 0; const t = () => { const now = JSON.stringify(cam); n = now === last ? n + 1 : 0; last = now; n > 5 ? r(cam) : requestAnimationFrame(t); }; requestAnimationFrame(t); })"
+    up = pg.evaluate("cam.x"); pg.evaluate("fling({ trail: [[0, 0, 0], [16, 16, 0], [32, 32, 0]] }, { timeStamp: 40 })"); end = pg.evaluate(still)  # let go at 1px/ms
+    ok(abs(end["x"] - up - 320) < 1, "a flick keeps the page coasting after letting go, then it stops", f"{up} -> {end['x']}")
+    wheel = "([dy, ctrl]) => { live.dispatchEvent(new WheelEvent('wheel', { deltaY: dy, ctrlKey: ctrl, clientX: 400, clientY: 300, bubbles: true, cancelable: true })); return cam.y }"
+    y0 = pg.evaluate("cam.y"); y1 = pg.evaluate(wheel, [100, False]); end = pg.evaluate(still)
+    ok(y1 == y0 and round(end["y"]) == round(y0 - 100), "a mouse wheel step glides the page 100px instead of jumping", f"{y0} {y1} {end['y']}")
+    under = "() => [(400 - cam.x) / cam.z, (300 - cam.y) / cam.z]"
+    w0 = pg.evaluate(under); z0 = pg.evaluate("cam.z"); pg.evaluate(wheel, [100, True])
+    pg.wait_for_timeout(60); mid = pg.evaluate(under); midz = pg.evaluate("cam.z"); pg.evaluate(still); w1 = pg.evaluate(under)
+    ok(abs(pg.evaluate("cam.z") - z0 * 0.8) < 1e-6 and z0 * 0.8 < midz < z0 and max(abs(mid[0] - w0[0]), abs(mid[1] - w0[1]), abs(w1[0] - w0[0]), abs(w1[1] - w0[1])) < 0.01,
+       "a wheel step zooms out 20% in a glide, and the point under the cursor stays put", f"{w0} {mid} {w1}")
+    slid = pg.evaluate("slide = true; cam = { ...cam, x: cam.x + 300 }; camChanged(); needBase = false; frame(performance.now()); base.style.transform")
+    pg.wait_for_timeout(400)
+    same = pg.evaluate("(() => { const a = base.toDataURL(); paintBase(); return a === base.toDataURL(); })()")
+    ok(slid.startswith("matrix") and not pg.evaluate("base.style.transform") and same, "a slow canvas slides while moving, then repaints exactly once still", slid)
     bw = lambda: pg.evaluate("document.querySelector('nav.bar').getBoundingClientRect().width")
     w1 = bw(); pg.evaluate("store.set('sl8:toolSize', '1.5'); layoutRing()")
     ok(abs(bw() / w1 - 1.5) < 0.03, "the tool size setting scales the bar")

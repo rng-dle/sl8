@@ -200,8 +200,10 @@ function toggleVideo(it) {
   else el.pause();
 }
 
-// ponytail: full redraw of visible strokes on every camera move; add tile caching if notes reach tens of thousands of strokes
+// ponytail: full redraw of visible strokes on every camera move (slow devices slide instead, see frame); add tile caching if notes reach tens of thousands of strokes
 function paintBase() {
+  painted = { ...cam };
+  base.style.transform = '';
   clear(bctx);
   setCam(bctx);
   const vx0 = -cam.x / cam.z, vy0 = -cam.y / cam.z;
@@ -388,31 +390,73 @@ function applyLook() {
   schedule(true);
 }
 
-let raf = 0, needBase = false, needLive = false;
+let raf = 0, needBase = false, needLive = false, needCam = false;
 function schedule(baseToo) {
   needLive = true;
   if (baseToo) needBase = true;
-  if (!raf) raf = requestAnimationFrame(() => {
-    raf = 0;
-    if (needBase) { paintBase(); paintView(); }
-    if (needLive) paintLive();
-    needBase = needLive = false;
-    drawMinimap();
-  });
+  if (!raf) raf = requestAnimationFrame(frame);
+}
+// Heavy canvas on a slow device: when a full repaint can't keep up while the camera moves, the last painting slides and
+// scales with the camera (cheap, on the GPU) and is repainted properly once the camera settles.
+let painted = null, slide = false, slowFrames = 0, lastPaint = 0, settleTimer = 0;
+function frame(now) {
+  raf = 0;
+  if (goal) stepGlide(now);
+  const camOnly = needCam && !needBase;
+  if (camOnly && lastPaint) { slowFrames = now - lastPaint > 24 ? slowFrames + 1 : 0; slide ||= slowFrames > 1; } // two late frames in a row
+  lastPaint = 0;
+  if (camOnly && slide && painted) {
+    const s = cam.z / painted.z;
+    base.style.transform = `matrix(${s}, 0, 0, ${s}, ${cam.x - painted.x * s}, ${cam.y - painted.y * s})`;
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(settle, 150);
+  } else if (needBase || camOnly) {
+    paintBase();
+    if (camOnly) lastPaint = now;
+  }
+  if (needBase || needCam) paintView();
+  if (needLive) paintLive();
+  needBase = needLive = needCam = false;
+  drawMinimap();
+}
+function settle() { // the camera stopped: paint properly, and check whether a full repaint is quick again
+  schedule(true);
+  requestAnimationFrame((a) => requestAnimationFrame((b) => { if (b - a < 20) slide = false; }));
 }
 
 let camSaveTimer;
 function camChanged() {
-  schedule(true);
+  needCam = true;
+  schedule(false);
   clearTimeout(camSaveTimer);
   camSaveTimer = setTimeout(() => store.set('sl8:cam:' + canvasKey, cam), 400);
 }
 // zoom range (Settings): 1x is 10% to 800%; 2x and 4x (the default) go that much further each way
 const clampZ = (z) => { const k = { 1: 1, 2: 2, 4: 4 }[store.get('sl8:zoomRange')] || 4; return Math.min(8 * k, Math.max(0.1 / k, z)); };
-function zoomAt(sx, sy, factor) {
-  const z = clampZ(cam.z * factor);
-  const wx = (sx - cam.x) / cam.z, wy = (sy - cam.y) / cam.z;
-  cam = { x: sx - wx * z, y: sy - wy * z, z };
+// smooth: glide there (buttons, keys, a mouse wheel's steps), measured from where a glide already under way is heading
+function zoomAt(sx, sy, factor, smooth) {
+  const from = (smooth && goal) || cam, z = clampZ(from.z * factor);
+  const wx = (sx - from.x) / from.z, wy = (sy - from.y) / from.z, to = { x: sx - wx * z, y: sy - wy * z, z };
+  if (smooth) return glideTo(to);
+  stopGlide(); cam = to; camChanged();
+}
+
+/* ---------- glides: the camera eases to a goal (jumps, wheel steps) or coasts after a flick; any touch stops it ---------- */
+let goal = null, glideT = 0;
+function glideTo(to, ms = 110) { // ms: how quickly it settles (time constant)
+  if (matchMedia('(prefers-reduced-motion: reduce)').matches) { goal = null; cam = { x: to.x, y: to.y, z: clampZ(to.z) }; return camChanged(); }
+  goal = { x: to.x, y: to.y, z: clampZ(to.z), ms };
+  glideT = 0;
+  camChanged();
+}
+function stopGlide() { goal = null; }
+function stepGlide(now) {
+  const f = 1 - Math.exp(-(glideT ? Math.min(64, now - glideT) : 16) / goal.ms);
+  glideT = now;
+  const zooming = Math.abs(goal.z / cam.z - 1) > 1e-4, z = zooming ? cam.z * (goal.z / cam.z) ** f : goal.z;
+  const a = zooming ? (z - cam.z) / (goal.z - cam.z) : f; // moves x and y in step with the zoom, so the point it zooms around stays put
+  cam = { x: cam.x + (goal.x - cam.x) * a, y: cam.y + (goal.y - cam.y) * a, z };
+  if (!zooming && Math.abs(goal.x - cam.x) < 0.25 && Math.abs(goal.y - cam.y) < 0.25) { cam = { x: goal.x, y: goal.y, z: goal.z }; goal = null; }
   camChanged();
 }
 
@@ -781,20 +825,18 @@ board.addEventListener('pointerup', (e) => {
 
 /* ---------- minimap ---------- */
 const mm = $('#minimap'), mmx = mm.getContext('2d'), mmRects = new Map(); // id -> { it, r }: bounds are only recomputed when an item changes
-let mmView = null, mmTimer = 0, mmLast = 0, mmShapePath = null;
+let mmView = null, mmShapePath = null, mmKey = '', mmChanged = true;
+const mmCache = document.createElement('canvas'), mmc = mmCache.getContext('2d'); // the shape and the items; each frame only adds the view box
 const mmOn = () => store.get('sl8:minimap') !== 'off';
 function drawMinimap() {
   if (!mmOn() || !items.size || !mm) { mm.hidden = true; return; }
-  const now = Date.now();
-  if (now - mmLast < 120) { clearTimeout(mmTimer); mmTimer = setTimeout(drawMinimap, 130); return; }
-  mmLast = now;
   const rects = [];
   for (const [id, it] of items) {
     let c = mmRects.get(id);
-    if (!c || c.it !== it) { c = { it, r: it.kind === 'conn' ? null : itemRect(it) }; mmRects.set(id, c); }
+    if (!c || c.it !== it) { c = { it, r: it.kind === 'conn' ? null : itemRect(it) }; mmRects.set(id, c); mmChanged = true; }
     if (c.r) rects.push(c.r);
   }
-  for (const id of mmRects.keys()) if (!items.has(id)) mmRects.delete(id);
+  if (mmRects.size > items.size) for (const id of mmRects.keys()) if (!items.has(id)) { mmRects.delete(id); mmChanged = true; }
   const [vx0, vy0] = toWorld(0, 0), [vx1, vy1] = toWorld(board.clientWidth, board.clientHeight);
   let x0 = vx0, y0 = vy0, x1 = vx1, y1 = vy1;
   for (const r of rects) { x0 = Math.min(x0, r.x0); y0 = Math.min(y0, r.y0); x1 = Math.max(x1, r.x1); y1 = Math.max(y1, r.y1); }
@@ -802,36 +844,42 @@ function drawMinimap() {
   x0 -= padX; y0 -= padY; x1 += padX; y1 += padY;
   const shape = MM_ASPECT[store.get('sl8:mmShape')] ? store.get('sl8:mmShape') : 'rounded', [cw, ch] = mmSize(shape), scale = innerWidth <= 640 ? 0.75 : 1;
   const wantW = Math.round(cw * scale * 2), wantH = Math.round(ch * scale * 2);
-  if (mm.width !== wantW || mm.height !== wantH) { mm.width = wantW; mm.height = wantH; mm.style.width = wantW / 2 + 'px'; mm.style.height = wantH / 2 + 'px'; }
+  if (mm.width !== wantW || mm.height !== wantH) { mm.width = mmCache.width = wantW; mm.height = mmCache.height = wantH; mm.style.width = wantW / 2 + 'px'; mm.style.height = wantH / 2 + 'px'; mmChanged = true; }
   const W = mm.width, H = mm.height, [bl, bt, br, bb] = MM_BOX[shape];
   const ix = W * bl, iy = H * bt, iw = W * (br - bl), ih = H * (bb - bt);
   const k = Math.min(iw / (x1 - x0), ih / (y1 - y0)), ox = ix + (iw - (x1 - x0) * k) / 2, oy = iy + (ih - (y1 - y0) * k) / 2;
   mmView = { x0, y0, k, ox, oy };
   mm.hidden = false;
-  const cs = getComputedStyle(document.documentElement), path = mmShapePath = new Path2D(); // drawn 4px in from the edge so the border isn't clipped
-  path.addPath(mmPath(shape, W - 8, H - 8), new DOMMatrix().translate(4, 4));
+  const key = [shape, x0, y0, k, palette.text, palette.accent, store.get('sl8:mmBg'), store.get('sl8:mmBorder'), document.documentElement.dataset.theme].join();
+  if (mmChanged || key !== mmKey) { // panning inside the content keeps the same picture
+    mmChanged = false; mmKey = key;
+    const cs = getComputedStyle(document.documentElement), path = mmShapePath = new Path2D(); // drawn 4px in from the edge so the border isn't clipped
+    path.addPath(mmPath(shape, W - 8, H - 8), new DOMMatrix().translate(4, 4));
+    mmc.clearRect(0, 0, W, H);
+    mmc.globalAlpha = store.get('sl8:mmBg') ? 1 : 0.9;
+    mmc.fillStyle = store.get('sl8:mmBg') || cs.getPropertyValue('--surface').trim() || '#fff';
+    mmc.fill(path);
+    mmc.save(); mmc.clip(path);
+    mmc.fillStyle = palette.text; mmc.globalAlpha = 0.45;
+    for (const r of rects) mmc.fillRect(ox + (r.x0 - x0) * k, oy + (r.y0 - y0) * k, Math.max(2, (r.x1 - r.x0) * k), Math.max(2, (r.y1 - r.y0) * k));
+    mmc.restore();
+    mmc.lineWidth = store.get('sl8:mmBorder') ? 5 : 2;
+    mmc.strokeStyle = store.get('sl8:mmBorder') || cs.getPropertyValue('--line').trim() || '#ccc';
+    mmc.stroke(path);
+  }
   mmx.clearRect(0, 0, W, H);
-  mmx.globalAlpha = store.get('sl8:mmBg') ? 1 : 0.9;
-  mmx.fillStyle = store.get('sl8:mmBg') || cs.getPropertyValue('--surface').trim() || '#fff';
-  mmx.fill(path);
-  mmx.globalAlpha = 1;
-  mmx.save(); mmx.clip(path);
-  mmx.fillStyle = palette.text; mmx.globalAlpha = 0.45;
-  for (const r of rects) mmx.fillRect(ox + (r.x0 - x0) * k, oy + (r.y0 - y0) * k, Math.max(2, (r.x1 - r.x0) * k), Math.max(2, (r.y1 - r.y0) * k));
-  mmx.globalAlpha = 1;
+  mmx.drawImage(mmCache, 0, 0);
+  mmx.save(); mmx.clip(mmShapePath);
   mmx.strokeStyle = palette.accent; mmx.lineWidth = 3; mmx.fillStyle = palette.accentSoft;
   const vx = ox + (vx0 - x0) * k, vy = oy + (vy0 - y0) * k, vw = (vx1 - vx0) * k, vh = (vy1 - vy0) * k;
   mmx.fillRect(vx, vy, vw, vh); mmx.strokeRect(vx, vy, vw, vh);
   mmx.restore();
-  mmx.lineWidth = store.get('sl8:mmBorder') ? 5 : 2;
-  mmx.strokeStyle = store.get('sl8:mmBorder') || cs.getPropertyValue('--line').trim() || '#ccc';
-  mmx.stroke(path);
 }
 function mmJump(e) {
   if (!mmView) return;
   const r = mm.getBoundingClientRect(), wx = mmView.x0 + ((e.clientX - r.left) / r.width * mm.width - mmView.ox) / mmView.k, wy = mmView.y0 + ((e.clientY - r.top) / r.height * mm.height - mmView.oy) / mmView.k;
-  cam = { ...cam, x: board.clientWidth / 2 - wx * cam.z, y: board.clientHeight / 2 - wy * cam.z };
-  camChanged();
+  const z = (goal || cam).z;
+  glideTo({ x: board.clientWidth / 2 - wx * z, y: board.clientHeight / 2 - wy * z, z });
 }
 mm.addEventListener('pointerdown', (e) => {
   const r = mm.getBoundingClientRect();
@@ -1030,8 +1078,8 @@ function focusItem(id) {
   const b = itemRect(it), panel = !$('#ai').hidden;
   const w = board.clientWidth - (panel && innerWidth > 640 ? 424 : 0);
   const cy = panel && innerWidth <= 640 ? innerHeight * 0.16 : board.clientHeight * 0.4;
-  cam = { ...cam, x: w / 2 - ((b.x0 + b.x1) / 2) * cam.z, y: cy - ((b.y0 + b.y1) / 2) * cam.z };
-  camChanged();
+  const z = (goal || cam).z;
+  glideTo({ x: w / 2 - ((b.x0 + b.x1) / 2) * z, y: cy - ((b.y0 + b.y1) / 2) * z, z });
   const el = textEls.get(id);
   if (el) { el.classList.remove('flash'); void el.offsetWidth; el.classList.add('flash'); }
   else setSelection([id]);
@@ -1074,6 +1122,7 @@ const penBusy = () => Date.now() - lastPen < 800 || [...pointers.values()].some(
 function onDown(e) {
   const isPen = e.pointerType === 'pen';
   if (e.pointerType === 'touch' && penSeen && penBusy()) return;
+  stopGlide(); // catch the page mid-glide
   if (isPen) {
     notePen();
     if (gesture) { // the pen beats whatever a touch started, e.g. a palm that landed first
@@ -1207,6 +1256,8 @@ function onMove(e) {
   if (gesture.kind === 'pan') {
     cam = { ...cam, x: cam.x + e.clientX - gesture.lx, y: cam.y + e.clientY - gesture.ly };
     gesture.lx = e.clientX; gesture.ly = e.clientY;
+    (gesture.trail ||= []).push([e.timeStamp, e.clientX, e.clientY]);
+    if (gesture.trail.length > 12) gesture.trail.shift();
     camChanged();
   } else if (gesture.kind === 'draw') {
     const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
@@ -1231,7 +1282,8 @@ function onMove(e) {
       renderDom(m);
     }
     sorted = null;
-    schedule(true);
+    gesture.base ??= connCount > 0 || [...gesture.orig.values()].some((it) => !textEls.has(it.id)); // only notes and portals: nothing on the canvas layer moves
+    schedule(gesture.base);
   } else if (gesture.kind === 'resize') { // keeps its shape
     const o = gesture.orig, w = Math.max(24, toWorld(e.clientX, e.clientY)[0] - o.x);
     items.set(o.id, { ...o, w: Math.round(w), h: Math.round((w * o.h) / o.w) });
@@ -1260,13 +1312,13 @@ function onUp(e) {
   gesture = null;
   document.body.classList.remove('panning');
   scribble.stop();
+  if (g.kind === 'pan') fling(g, e);
 
   if (g.kind === 'draw' && g.stroke.p.length) {
     if (e.pointerType === 'mouse' && e.type === 'pointerup') addPoint(e, true, g); // end where the cursor is
     commit([{ id: g.stroke.id, before: null, after: g.stroke }]);
-    setCam(bctx);
-    drawStroke(bctx, g.stroke); // newest stroke is on top, so paint it straight onto the base layer
-    schedule(false);
+    if (base.style.transform) schedule(true); // the picture is still sliding: repaint it whole
+    else { setCam(bctx); drawStroke(bctx, g.stroke); schedule(false); } // newest stroke is on top, so paint it straight onto the base layer
   } else if (g.kind === 'erase') {
     endErase(g);
   } else if (g.kind === 'resize') {
@@ -1311,6 +1363,16 @@ function onUp(e) {
     if (tap && tool.name === 'text' && !g.wasEditing) newText(...toWorld(e.clientX, e.clientY));
     else doubleTap(e, tap, g.wasEditing);
   }
+}
+// let go while moving: the page coasts on and slows down, like a flicked sheet of paper
+function fling(g, e) {
+  const t = g.trail || [], last = t[t.length - 1];
+  if (!last || e.timeStamp - last[0] > 50) return; // it had already stopped
+  const first = t.find((p) => last[0] - p[0] <= 100) || last, dt = last[0] - first[0];
+  if (dt < 8) return;
+  const vx = (last[1] - first[1]) / dt, vy = (last[2] - first[2]) / dt; // px per ms
+  if (Math.hypot(vx, vy) < 0.25) return;
+  glideTo({ x: cam.x + vx * 320, y: cam.y + vy * 320, z: cam.z }, 320); // starts at the flick's speed and eases to a stop
 }
 // double-tap: edit the text box under the finger, or start a new one on empty space
 function doubleTap(e, tap, wasEditing) {
@@ -1372,9 +1434,11 @@ for (const type of ['pointerover', 'pointermove']) {
 }
 board.addEventListener('wheel', (e) => {
   e.preventDefault();
-  const k = e.deltaMode === 1 ? 16 : 1;
-  if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * k * 0.01));
-  else { cam = { ...cam, x: cam.x - e.deltaX * k, y: cam.y - e.deltaY * k }; camChanged(); }
+  const k = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? innerHeight : 1, dx = e.deltaX * k, dy = e.deltaY * k;
+  const d = Math.abs(e.deltaX) + Math.abs(e.deltaY), step = e.deltaMode !== 0 || ((!e.deltaX || !e.deltaY) && d >= 50 && Number.isInteger(d)); // a mouse wheel's click-steps
+  if (e.ctrlKey || e.metaKey) zoomAt(e.clientX, e.clientY, step ? 1.25 ** -Math.sign(dy) : Math.exp(-dy * 0.01), step); // 25% a step, then glide
+  else if (step) { const g = goal || cam; glideTo({ x: g.x - dx, y: g.y - dy, z: g.z }); }
+  else { stopGlide(); cam = { ...cam, x: cam.x - dx, y: cam.y - dy }; camChanged(); }
 }, { passive: false });
 
 /* ---------- toolbar ---------- */
@@ -1486,7 +1550,7 @@ $('#sound').onclick = () => {
 for (const b of document.querySelectorAll('[data-tool]')) b.onclick = () => setTool(b.dataset.tool);
 $('#undo').onclick = undo;
 $('#redo').onclick = redo;
-$('#zoom').onclick = () => zoomAt(board.clientWidth / 2, board.clientHeight / 2, 1 / cam.z);
+$('#zoom').onclick = () => zoomAt(board.clientWidth / 2, board.clientHeight / 2, 1 / (goal || cam).z, true);
 
 /* ---------- ring: one floating button; the same tool buttons fan out in circles around it (Settings > Tools) ---------- */
 // Inner ring: the tools, undo and redo. Outer ring: the current tool's options, with the size slider along the bottom.
@@ -1657,9 +1721,9 @@ addEventListener('keydown', (e) => {
   if (e.key === 'm') { mmFlip(); return; }
   const map = { v: 'select', p: 'pen', h: 'hl', e: 'eraser', t: 'text', c: 'connect' };
   if (map[e.key]) setTool(map[e.key]);
-  else if (e.key === '0') zoomAt(board.clientWidth / 2, board.clientHeight / 2, 1 / cam.z);
-  else if (e.key === '+' || e.key === '=') zoomAt(board.clientWidth / 2, board.clientHeight / 2, 1.25);
-  else if (e.key === '-') zoomAt(board.clientWidth / 2, board.clientHeight / 2, 0.8);
+  else if (e.key === '0') zoomAt(board.clientWidth / 2, board.clientHeight / 2, 1 / (goal || cam).z, true);
+  else if (e.key === '+' || e.key === '=') zoomAt(board.clientWidth / 2, board.clientHeight / 2, 1.25, true);
+  else if (e.key === '-') zoomAt(board.clientWidth / 2, board.clientHeight / 2, 0.8, true);
 });
 addEventListener('keyup', (e) => {
   if (e.key === ' ') { spaceDown = false; if (gesture?.kind !== 'pan') document.body.classList.remove('panning'); }

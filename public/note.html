@@ -199,6 +199,9 @@
   .tour-spot { position: fixed; z-index: 26; pointer-events: none; border: 3px solid var(--accent); border-radius: 999px;
     transition: left .2s, top .2s, width .2s, height .2s; animation: spot 1.4s ease-in-out infinite; }
   @keyframes spot { 50% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--accent) 22%, transparent); } }
+  /* popovers ease in rather than pop (reduced motion turns this off, in style.css) */
+  :is(.menu, .selbar, .tour, .picker, .ai, .toast):not([hidden]) { transition: opacity .16s ease-out, scale .16s ease-out; }
+  @starting-style { :is(.menu, .selbar, .tour, .picker, .ai, .toast):not([hidden]) { opacity: 0; scale: .97; } }
   .ring-scrim { position: fixed; inset: 0; z-index: 24; background: rgb(0 0 0 / .18); -webkit-backdrop-filter: blur(3px); backdrop-filter: blur(3px); }
   .swatch {
     width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent;
