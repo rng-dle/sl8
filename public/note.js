@@ -299,6 +299,14 @@ function paintLive() {
     setCam(lctx);
     drawStroke(lctx, gesture.stroke);
   }
+  if (ghosts.size) {
+    setCam(lctx);
+    const now = Date.now();
+    for (const g of ghosts.values()) {
+      if (items.has(g.id) || now > (g.until || g.at + 10000)) ghosts.delete(g.id); // arrived, or its sender went away
+      else if (g.p.length) drawStroke(lctx, g);
+    }
+  }
   if (gesture?.kind === 'connect') {
     setCam(lctx);
     const from = items.get(gesture.from), over = gesture.over && items.get(gesture.over);
@@ -558,7 +566,7 @@ const pendingKey = 'sl8:pending:' + canvasKey;
 const tabId = crypto.randomUUID(); // this open copy of the canvas
 // other tabs of this canvas in this browser: every change goes to them at once (see merge for what they keep)
 const tabs = 'BroadcastChannel' in self ? new BroadcastChannel('sl8:' + canvasKey) : null;
-if (tabs) tabs.onmessage = (e) => { const { id, item } = e.data || {}; if (id) item ? merge([item], []) : merge([], [id]); };
+if (tabs) tabs.onmessage = (e) => { const { id, item } = e.data || {}; if (id) { saves++; item ? merge([item], []) : merge([], [id]); } };
 let inflight = null, retryDelay = 0, saveTimer = 0, stopped = false, leaving = false;
 
 function setStatus(text, state = '') {
@@ -654,16 +662,46 @@ async function resync() {
   const ids = new Set(r.items.map((it) => it.id));
   merge(r.items, [...items.keys()].filter((id) => !ids.has(id)));
 }
-// Same browser: changes arrive instantly over a BroadcastChannel. Other devices: a WebSocket to the canvas's live room
-// pings us whenever anyone saves it, and we fetch the changes at once. Polling stays as a slow safety net while the
-// socket is up, and goes back to every second if it drops.
+// Same browser: changes arrive instantly over a BroadcastChannel. Other devices: a WebSocket to the canvas's live room.
+// Your own other copies get each save's changes in the push itself, and strokes while they're being drawn; a share link
+// gets a ping and fetches. Polling stays as a slow safety net while the socket is up, and every second if it drops.
+// saves: changes made here or received since a poll began, so a poll answer that may be older is asked again.
 let since = 0, saves = 0, lastActivity = Date.now(), pollTimer = 0, sock = null, sockRetry = 0;
 function connectLive() {
   if (stopped || !('WebSocket' in self)) return;
   const ws = new WebSocket(location.origin.replace(/^http/, 'ws') + notePath);
   ws.onopen = () => { sock = ws; sockRetry = 0; poll(); };
-  ws.onmessage = (e) => { if (e.data !== tabId) poll(); };
+  ws.onmessage = (e) => {
+    if (e.data[0] !== '{') return e.data !== tabId && poll(); // a ping: fetch what changed
+    const m = JSON.parse(e.data);
+    if (m.k !== 'ops') return ghost(m);
+    if (m.from === tabId) return;
+    saves++;
+    merge(m.ops.filter((o) => o.put).map((o) => o.put), m.ops.filter((o) => o.del).map((o) => o.del));
+  };
   ws.onclose = () => { if (sock === ws) sock = null; setTimeout(connectLive, (sockRetry = Math.min(30000, (sockRetry || 1000) * 2))); };
+}
+// strokes another of your copies is drawing right now, shown on the live layer until the finished one arrives
+const ghosts = new Map();
+function ghost(m) {
+  let g = ghosts.get(m.id);
+  if (!g) {
+    if (m.from || !m.s) return;
+    ghosts.set(m.id, (g = { id: m.id, kind: 'stroke', ...m.s, p: [] }));
+  }
+  if (m.from !== g.p.length) return ghosts.delete(m.id); // missed a piece: wait for the finished stroke instead
+  g.p.push(...m.p);
+  g.at = Date.now();
+  if (m.k === 'end') g.until = g.at + 3000;
+  schedule(false);
+}
+// the stroke you're drawing, out to your other copies as you draw it (at most every 30ms, only what's new)
+function streamStroke(g, end) {
+  if (share || sock?.readyState !== 1) return;
+  const now = performance.now(), s = g.stroke, from = g.sent || 0;
+  if (!end && (now - (g.sentAt || 0) < 30 || from === s.p.length)) return;
+  sock.send(JSON.stringify({ k: end ? 'end' : 'draw', id: s.id, from, p: s.p.slice(from), s: from ? undefined : { c: s.c, w: s.w, pt: s.pt, hl: s.hl, pr: s.pr } }));
+  g.sentAt = now; g.sent = s.p.length;
 }
 async function poll() {
   clearTimeout(pollTimer);
@@ -1299,6 +1337,7 @@ function onMove(e) {
     const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
     for (const ce of evs.length ? evs : [e]) addPoint(ce);
     sound(gesture, e);
+    streamStroke(gesture);
     schedule(false);
   } else if (gesture.kind === 'erase') {
     const evs = e.getCoalescedEvents ? e.getCoalescedEvents() : [];
@@ -1352,6 +1391,7 @@ function onUp(e) {
 
   if (g.kind === 'draw' && g.stroke.p.length) {
     if (e.pointerType === 'mouse' && e.type === 'pointerup') addPoint(e, true, g); // end where the cursor is
+    streamStroke(g, true);
     commit([{ id: g.stroke.id, before: null, after: g.stroke }]);
     if (base.style.transform) schedule(true); // the picture is still sliding: repaint it whole
     else { setCam(bctx); drawStroke(bctx, g.stroke); schedule(false); } // newest stroke is on top, so paint it straight onto the base layer

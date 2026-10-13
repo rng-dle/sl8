@@ -93,6 +93,28 @@ await owner.json(N + '/ops', { method: 'POST', body: { ops: [{ put: { id: 'img-i
 f = await fetch(`${B}${E}/files/${file}`);
 ok(f.status === 404, "a photo outside the area doesn't load through the link");
 
+// the live room: the owner's other copies get each save's changes and strokes still being drawn; a link only hears a ping
+const live = (path, cookie, extra = {}) => new Promise((res, rej) => {
+  const w = new WebSocket(B.replace(/^http/, 'ws') + path, { headers: { 'cf-connecting-ip': ipOf(), ...(cookie && { cookie }), ...extra } });
+  const got = [];
+  w.onmessage = (e) => got.push(String(e.data));
+  w.onopen = () => res({ w, got });
+  w.onerror = () => rej(new Error('no live connection to ' + path));
+});
+const [o1, o2, link] = await Promise.all([live(N, `sid=${owner.jar.get('sid')}`), live(N, `sid=${owner.jar.get('sid')}`), live(E, null, { 'x-owner': '1' })]); // the link even claims to be the owner
+await owner.json(N + '/ops', { method: 'POST', body: { ops: [{ put: text('live1', 20, 20) }], tab: 'tab-a' } });
+link.w.send(JSON.stringify({ k: 'draw', id: 'fake', from: 0, p: [1, 1, 0.5], s: { c: 'red', w: 3 } }));
+o1.w.send(JSON.stringify({ k: 'draw', id: 'g1', from: 0, p: [5, 5, 0.5, 6, 6, 0.5], s: { c: 'ink', w: 3 } }));
+await new Promise((r) => setTimeout(r, 400));
+const o2m = o2.got.map((m) => (m[0] === '{' ? JSON.parse(m) : m));
+ok(o2m.some((m) => m.k === 'ops' && m.from === 'tab-a' && m.ops?.[0]?.put?.id === 'live1'), "the owner's other copies get the saved change in the push itself", o2.got.join(' | '));
+ok(o2m.some((m) => m.k === 'draw' && m.id === 'g1' && m.p.length === 6) && !o2m.some((m) => m.id === 'fake'), "they see the owner's stroke being drawn, never one sent from a link");
+ok(link.got.length === 1 && link.got[0] === 'tab-a', "a link's copy only hears a ping, with no changes or strokes in it", link.got.join(' | '));
+ok(!o1.got.some((m) => m.includes('"g1"')), "a stroke being drawn doesn't come back to its own copy");
+const stranger = await live(N).then(() => true, () => false);
+ok(!stranger, "the live room needs the canvas's login or link");
+for (const c of [o1, o2, link]) c.w.close();
+
 // turning a link off
 await owner.json(`${N}/shares/${view.token}`, { method: 'DELETE' });
 r = await anon.json(V);

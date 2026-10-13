@@ -266,6 +266,18 @@ with sync_playwright() as p:
     try: dev2.wait_for_function("items.has('dev-test')", timeout=1500); there = True
     except Exception: there = False
     ok(there, "another device shows a new stroke within a moment, pushed by the live room")
+    # and sees a stroke while it's still being drawn, which turns into the saved one when it's done
+    pg.click("[data-tool=pen]")
+    pg.mouse.move(300, 300); pg.mouse.down()
+    for i in range(1, 15): pg.mouse.move(300 + i * 10, 300 + (i % 4) * 6); pg.wait_for_timeout(16)
+    try: dev2.wait_for_function("[...ghosts.values()].some(g => g.p.length >= 12)", timeout=1500); seen = True
+    except Exception: seen = False
+    pg.mouse.up()
+    sid_ = pg.evaluate("[...items.values()].filter(i => i.kind === 'stroke').at(-1).id")
+    try: dev2.wait_for_function(f"items.has('{sid_}') && (paintLive(), !ghosts.size)", timeout=1500); done = True
+    except Exception: done = False
+    ok(seen and done, "another device sees a stroke while it's being drawn, then the saved one in its place")
+    pg.click("[data-tool=select]")
     dev2.context.close()
 
     # the stretch-and-tear opening on a phone

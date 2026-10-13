@@ -80,7 +80,7 @@ def journey(br, device):
     if ring: tap("#fab")
     tap('[data-tool="text"]')
     if ring: tap("#ring-scrim")
-    at(150, 720); wait_step(6)
+    at(150, 480); wait_step(6)  # clear of the minimap, which sits in the bottom-left corner once there's something on the canvas
     ok(pg.evaluate("() => document.activeElement?.tagName") == "TEXTAREA", f"{device}: tapping with the text tool starts a note and finishes step 5")
     pg.keyboard.type("hello from the tour")
     for n in (7, 8):

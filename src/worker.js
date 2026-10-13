@@ -434,23 +434,43 @@ async function saveOps(env, noteId, list, share) {
   return json(rejected.length ? { ok: true, rejected } : { ok: true });
 }
 
-// A canvas's live room: everyone with it open holds a WebSocket here and hears a ping (the saving tab's id) whenever it is
-// saved, then fetches the changes the usual way, so a share link still only ever sees its own squares. Hibernates between pings.
+// A canvas's live room: everyone with it open holds a WebSocket here. The owner's copies get each save's changes in the
+// push itself, and strokes while they're still being drawn; a share link only hears a ping and fetches the usual way, so
+// it never sees past its own squares. Stores nothing, and hibernates between messages.
 export class Room extends DurableObject {
-  fetch() {
+  fetch(req) {
     const [client, server] = Object.values(new WebSocketPair());
     this.ctx.acceptWebSocket(server);
+    server.serializeAttachment({ owner: req.headers.get('x-owner') === '1' }); // set by join(), never by the browser
     return new Response(null, { status: 101, webSocket: client });
   }
-  ping(from) { for (const ws of this.ctx.getWebSockets()) try { ws.send(String(from).slice(0, 64)); } catch {} }
-  webSocketMessage() {}
+  ping(from, ops) {
+    from = String(from).slice(0, 64);
+    const full = ops && JSON.stringify({ k: 'ops', from, ops });
+    for (const ws of this.ctx.getWebSockets()) try { ws.send(full && ws.deserializeAttachment()?.owner ? full : from); } catch {}
+  }
+  webSocketMessage(ws, msg) { // a stroke still being drawn, from one of the owner's copies to the others
+    if (typeof msg !== 'string' || msg.length > 65536 || !ws.deserializeAttachment()?.owner) return;
+    let m; try { m = JSON.parse(msg); } catch { return; }
+    const pts = Array.isArray(m?.p) && m.p.length <= 6000 && m.p.length % 3 === 0 && m.p.every(Number.isFinite);
+    if ((m.k !== 'draw' && m.k !== 'end') || !ID.test(m.id) || !Number.isInteger(m.from) || m.from < 0 || !pts) return;
+    const s = m.s && { c: String(m.s.c).slice(0, 32), w: Number(m.s.w) || 1, pt: m.s.pt ? String(m.s.pt).slice(0, 16) : undefined, hl: !!m.s.hl, pr: !!m.s.pr };
+    const out = JSON.stringify({ k: m.k, id: m.id, from: m.from, p: m.p, s });
+    for (const peer of this.ctx.getWebSockets()) if (peer !== ws && peer.deserializeAttachment()?.owner) try { peer.send(out); } catch {}
+  }
   webSocketClose(ws) { try { ws.close(1000); } catch {} }
 }
 const room = (env, noteId) => env.ROOM.get(env.ROOM.idFromName(noteId));
-// after a save, tell the room (in the background; a missed ping only means waiting for the next poll)
-async function saved(ctx, env, noteId, body, res) {
+function join(env, noteId, req, owner) {
+  const r = new Request(req);
+  r.headers.set('x-owner', owner ? '1' : '0');
+  return room(env, noteId).fetch(r);
+}
+// after a save, tell the room in the background (a missed push only means waiting for the next poll);
+// ops: the owner's own changes, all of which were accepted
+async function saved(ctx, env, noteId, body, res, ops) {
   const r = await res;
-  if (r.ok) ctx.waitUntil(room(env, noteId).ping(body.tab || '').catch((e) => console.error('room ping failed', e)));
+  if (r.ok) ctx.waitUntil(room(env, noteId).ping(body.tab || '', ops).catch((e) => console.error('room ping failed', e)));
   return r;
 }
 
@@ -484,7 +504,7 @@ async function shared(req, env, ctx, url, token, ops, fileId, body) {
     return saved(ctx, env, row.note_id, body, saveOps(env, row.note_id, body.ops, { area }));
   }
   if (method !== 'GET') return fail(404, 'Not found.');
-  if (!fileId && req.headers.get('upgrade') === 'websocket') return room(env, row.note_id).fetch(req);
+  if (!fileId && req.headers.get('upgrade') === 'websocket') return join(env, row.note_id, req, false);
   if (fileId) {
     // only files this link can see: the background, or a photo or video in its area
     const [style, rows] = await Promise.all([
@@ -770,8 +790,8 @@ async function api(req, env, ctx, url) {
       .bind(noteId, user.id).first();
     if (!note) return fail(404, 'Note not found.');
 
-    if (ops && method === 'POST') return saved(ctx, env, noteId, body, saveOps(env, noteId, body.ops));
-    if (!ops && !shares && req.headers.get('upgrade') === 'websocket') return room(env, noteId).fetch(req);
+    if (ops && method === 'POST') return saved(ctx, env, noteId, body, saveOps(env, noteId, body.ops), body.ops);
+    if (!ops && !shares && req.headers.get('upgrade') === 'websocket') return join(env, noteId, req, true);
 
     if (shares) {
       if (token && method === 'DELETE') {
