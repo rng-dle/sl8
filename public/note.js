@@ -555,6 +555,7 @@ function updateUndo() {
 
 const pending = new Map(); // id -> item, or null for a delete
 const pendingKey = 'sl8:pending:' + canvasKey;
+const tabId = crypto.randomUUID(); // this open copy of the canvas
 // other tabs of this canvas in this browser: every change goes to them at once (see merge for what they keep)
 const tabs = 'BroadcastChannel' in self ? new BroadcastChannel('sl8:' + canvasKey) : null;
 if (tabs) tabs.onmessage = (e) => { const { id, item } = e.data || {}; if (id) item ? merge([item], []) : merge([], [id]); };
@@ -571,7 +572,7 @@ function queue(id, item) {
   store.set(pendingKey, [...pending]); // survives a crash or closed tab
   tabs?.postMessage({ id, item }); // other tabs of this canvas in this browser see it at once
   setStatus('Saving…');
-  scheduleSave(150);
+  scheduleSave(50);
 }
 function scheduleSave(ms) {
   clearTimeout(saveTimer);
@@ -590,7 +591,7 @@ async function send(keepalive) {
   try {
     const res = await api(`${notePath}/ops`, {
       method: 'POST', keepalive,
-      body: { ops: batch.map(([id, it]) => (it ? { put: it } : { del: id })) },
+      body: { ops: batch.map(([id, it]) => (it ? { put: it } : { del: id })), tab: tabId }, // tab: so the ping that follows can skip us
     });
     saves++;
     for (const [id, it] of batch) if (pending.get(id) === it) pending.delete(id);
@@ -653,23 +654,31 @@ async function resync() {
   const ids = new Set(r.items.map((it) => it.id));
   merge(r.items, [...items.keys()].filter((id) => !ids.has(id)));
 }
-// Same browser: changes arrive instantly over a BroadcastChannel. Other devices:
-// ponytail: polls every 1 s while visible, slowing down when nothing happens; a Durable Object with WebSockets would make it live
-let since = 0, saves = 0, lastActivity = Date.now(), pollTimer = 0;
+// Same browser: changes arrive instantly over a BroadcastChannel. Other devices: a WebSocket to the canvas's live room
+// pings us whenever anyone saves it, and we fetch the changes at once. Polling stays as a slow safety net while the
+// socket is up, and goes back to every second if it drops.
+let since = 0, saves = 0, lastActivity = Date.now(), pollTimer = 0, sock = null, sockRetry = 0;
+function connectLive() {
+  if (stopped || !('WebSocket' in self)) return;
+  const ws = new WebSocket(location.origin.replace(/^http/, 'ws') + notePath);
+  ws.onopen = () => { sock = ws; sockRetry = 0; poll(); };
+  ws.onmessage = (e) => { if (e.data !== tabId) poll(); };
+  ws.onclose = () => { if (sock === ws) sock = null; setTimeout(connectLive, (sockRetry = Math.min(30000, (sockRetry || 1000) * 2))); };
+}
 async function poll() {
   clearTimeout(pollTimer);
   if (stopped || !since || document.visibilityState !== 'visible') return;
   const idle = Date.now() - lastActivity;
-  const next = () => { pollTimer = setTimeout(poll, idle < 120e3 ? 1000 : idle < 600e3 ? 3000 : 10000); };
-  if (inflight) return next();
+  const next = (ms = (sock ? 15 : 1) * (idle < 120e3 ? 1000 : idle < 600e3 ? 3000 : 10000)) => { pollTimer = setTimeout(poll, ms); };
+  if (inflight) return next(250);
   const n = saves;
   try {
     const r = await api(`${notePath}?since=${since}`);
     if (r.reload) await resync();
-    else if (n === saves) { // a save that finished meanwhile may be newer than this answer; ask again next time
+    else if (n === saves) {
       if (merge(r.items, r.gone)) lastActivity = Date.now();
       since = r.now;
-    }
+    } else return next(250); // a save finished meanwhile and may be newer than this answer: ask again in a moment
   } catch (e) {
     if (e.status === 401 || e.status === 404) {
       stopped = true;
@@ -2457,6 +2466,7 @@ async function start() {
     if (!shareToken) showTrail();
     since = now;
     poll();
+    connectLive();
     try { if (sessionStorage.getItem('sl8:tour')) { sessionStorage.removeItem('sl8:tour'); tour(); } } catch {} // chosen during setup
     schedule(true);
     const target = location.hash.match(/^#item-([\w-]+)$/)?.[1];

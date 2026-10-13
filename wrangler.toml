@@ -17,6 +17,14 @@ binding = "DB"
 database_name = "sl8-db"
 database_id = "ed289357-d1e9-41e0-a4d5-14a71ef1e4f1"
 
+[[durable_objects.bindings]]
+name = "ROOM" # one live room per open canvas: pings every open copy when it's saved
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Room"] # SQLite-backed, the kind the Workers Free plan allows (it stores nothing)
+
 [[kv_namespaces]]
 binding = "FILES" # uploaded canvas background images
 id = "f20ba06a87b646558d008b09b8ac096d"

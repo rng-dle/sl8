@@ -259,6 +259,14 @@ with sync_playwright() as p:
     except Exception: there = False
     ok(there, "a second tab of the canvas shows a new stroke at once")
     tab2.close()
+    # another device hears a ping from the canvas's live room and fetches the change (its own polling is 15s while connected)
+    dev2 = br.new_context(extra_http_headers=RUN_IP, storage_state=ctx.storage_state()).new_page(); dev2.goto(home); dev2.wait_for_selector("#status:text('Saved')")
+    dev2.wait_for_function("sock?.readyState === 1", timeout=5000)
+    pg.evaluate("commit([{ id: 'dev-test', before: null, after: { id: 'dev-test', kind: 'stroke', t: Date.now(), c: 'ink', w: 3, p: [0, 0, 0.5, 60, 60, 0.5] } }])")
+    try: dev2.wait_for_function("items.has('dev-test')", timeout=1500); there = True
+    except Exception: there = False
+    ok(there, "another device shows a new stroke within a moment, pushed by the live room")
+    dev2.context.close()
 
     # the stretch-and-tear opening on a phone
     m = br.new_context(extra_http_headers=RUN_IP, viewport={"width": 390, "height": 844}, device_scale_factor=2, has_touch=True, is_mobile=True, storage_state=ctx.storage_state())

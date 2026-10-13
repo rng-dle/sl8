@@ -68,7 +68,7 @@ The Python tests need `pip install playwright && playwright install chromium`.
 - **Desktop:** the wheel pans, Ctrl + wheel or a trackpad pinch zooms, and holding Space lets you drag. Ctrl+Z and Ctrl+Shift+Z undo and redo.
 - **Appearance:** theme and canvas background in the ⋯ menu or Settings. The opening animation can be set to Full, Short or Off.
 - **Saving:** changes save every second. Offline edits stay on the device and are sent when the connection returns.
-- **Sync:** an open canvas checks for changes every 3 seconds while it's on screen (slower when nothing is happening), so a phone and a laptop on the same canvas see each other's writing.
+- **Sync:** each open canvas keeps a WebSocket to its live room (a Durable Object, `Room` in `src/worker.js`) that pings it whenever anyone saves; it then fetches the changes the usual way, so a share link still sees only its squares. A change shows on another device in about a tenth of a second plus the network, and instantly in another tab of the same browser. Polling stays as a slow safety net (every 15 s while connected, every second if the socket drops). The `Room` class is created by the migration in `wrangler.toml` on the next deploy.
 - **Sharing (⋯ → Share…):** a link to view or edit, for the whole canvas or for chosen squares of the dot grid. Squares follow the zoom (96 to 192 px on screen when picked); each one holds the four smaller squares inside it, and an item belongs to the square its first point is in. People with the link need no account. The server checks every change from a link against its squares, links can't add photos, videos or portals, and Turn off ends a link at once.
 - **Search:** on the Canvases page, across everything typed and every canvas title. Results open the canvas at that note.
 - **Account (Settings):** change password, download all your data as JSON, log out on all devices, delete the account.
@@ -80,4 +80,4 @@ The Python tests need `pip install playwright && playwright install chromium`.
 
 - Sign in with ChatGPT: OpenAI requires approval for hosted apps (interest form linked in `docs/PLAN.md`).
 - Handwriting recognition and semantic search.
-- Live strokes while someone is drawing (sync is every few seconds; a Durable Object with WebSockets would make it live).
+- Strokes appear on other devices once they're finished, not while being drawn (the live room could stream them).

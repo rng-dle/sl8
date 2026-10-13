@@ -1,4 +1,5 @@
 // ThinkSL8 API: email/password accounts, per-user canvases (stored as "notes"), each a set of items, plus AI (src/ai.js).
+import { DurableObject } from 'cloudflare:workers';
 import { aiRoutes } from './ai.js';
 import { EMBEDS } from '../public/embeds.js';
 import { canSendMail, sendMail, resetEmail, verifyEmail } from './mail.js';
@@ -433,6 +434,26 @@ async function saveOps(env, noteId, list, share) {
   return json(rejected.length ? { ok: true, rejected } : { ok: true });
 }
 
+// A canvas's live room: everyone with it open holds a WebSocket here and hears a ping (the saving tab's id) whenever it is
+// saved, then fetches the changes the usual way, so a share link still only ever sees its own squares. Hibernates between pings.
+export class Room extends DurableObject {
+  fetch() {
+    const [client, server] = Object.values(new WebSocketPair());
+    this.ctx.acceptWebSocket(server);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+  ping(from) { for (const ws of this.ctx.getWebSockets()) try { ws.send(String(from).slice(0, 64)); } catch {} }
+  webSocketMessage() {}
+  webSocketClose(ws) { try { ws.close(1000); } catch {} }
+}
+const room = (env, noteId) => env.ROOM.get(env.ROOM.idFromName(noteId));
+// after a save, tell the room (in the background; a missed ping only means waiting for the next poll)
+async function saved(ctx, env, noteId, body, res) {
+  const r = await res;
+  if (r.ok) ctx.waitUntil(room(env, noteId).ping(body.tab || '').catch((e) => console.error('room ping failed', e)));
+  return r;
+}
+
 // What changed since a time another device last asked: changed items and deleted ids.
 async function changes(env, noteId, since, area) {
   const now = Date.now();
@@ -452,7 +473,7 @@ async function changes(env, noteId, since, area) {
 }
 
 // Someone opening a share link. No account needed: the link is the key.
-async function shared(req, env, url, token, ops, fileId, body) {
+async function shared(req, env, ctx, url, token, ops, fileId, body) {
   const row = await env.DB.prepare('SELECT s.note_id, s.mode, s.area, n.user_id, n.title FROM shares s JOIN notes n ON n.id = s.note_id WHERE s.token = ?').bind(token).first();
   if (!row) return fail(404, 'This link was turned off, or the canvas was deleted.');
   const area = row.area === '*' ? '*' : JSON.parse(row.area).map((c) => c.split('/').map(Number));
@@ -460,9 +481,10 @@ async function shared(req, env, url, token, ops, fileId, body) {
   if (ops) {
     if (method !== 'POST') return fail(404, 'Not found.');
     if (row.mode !== 'write') return fail(403, 'This link can view only.');
-    return saveOps(env, row.note_id, body.ops, { area });
+    return saved(ctx, env, row.note_id, body, saveOps(env, row.note_id, body.ops, { area }));
   }
   if (method !== 'GET') return fail(404, 'Not found.');
+  if (!fileId && req.headers.get('upgrade') === 'websocket') return room(env, row.note_id).fetch(req);
   if (fileId) {
     // only files this link can see: the background, or a photo or video in its area
     const [style, rows] = await Promise.all([
@@ -486,6 +508,10 @@ async function api(req, env, ctx, url) {
   const method = req.method;
   if (path.startsWith('/api/logo/') && method === 'GET') return logo(req, env, url, path);
 
+  if (req.headers.get('upgrade')) { // a live connection: only from our own pages
+    const origin = req.headers.get('origin');
+    if (origin && origin !== url.origin) return fail(403, 'Request blocked: wrong origin.');
+  }
   if (method !== 'GET') {
     const origin = req.headers.get('origin');
     if (origin && origin !== url.origin) return fail(403, 'Request blocked: wrong origin.');
@@ -585,7 +611,7 @@ async function api(req, env, ctx, url) {
   if (path === '/api/market' && method === 'GET') return marketList(req, env);
 
   const sh = path.match(/^\/api\/shared\/([a-f0-9]{64})(?:(\/ops)|\/files\/([0-9a-f-]{36}))?$/);
-  if (sh) return shared(req, env, url, sh[1], sh[2], sh[3], body);
+  if (sh) return shared(req, env, ctx, url, sh[1], sh[2], sh[3], body);
 
   const user = await currentUser(req, env);
   if (!user) return fail(401, 'Log in to continue.');
@@ -744,7 +770,8 @@ async function api(req, env, ctx, url) {
       .bind(noteId, user.id).first();
     if (!note) return fail(404, 'Note not found.');
 
-    if (ops && method === 'POST') return saveOps(env, noteId, body.ops);
+    if (ops && method === 'POST') return saved(ctx, env, noteId, body, saveOps(env, noteId, body.ops));
+    if (!ops && !shares && req.headers.get('upgrade') === 'websocket') return room(env, noteId).fetch(req);
 
     if (shares) {
       if (token && method === 'DELETE') {
