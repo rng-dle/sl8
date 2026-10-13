@@ -314,6 +314,14 @@ with sync_playwright() as p:
     rp.tap("[data-tool=pen]"); step(4)
     rp.wait_for_timeout(300)
     ok(rp.evaluate(onscreen) and rp.locator(".swatch").count() >= 8, "with the pen picked, its pen types and colours ring the tools")
+    gap = rp.evaluate("""(() => { const f = document.querySelector('#fab').getBoundingClientRect(), fx = f.x + f.width / 2, fy = f.y + f.height / 2;
+      const o = [...document.querySelectorAll('#options .ring-item')].filter(e => !e.closest('[hidden]') && getComputedStyle(e).display !== 'none').map(e => { const r = e.getBoundingClientRect(); return [Math.atan2(r.y + r.height / 2 - fy, r.x + r.width / 2 - fx), Math.hypot(r.x + r.width / 2 - fx, r.y + r.height / 2 - fy), r.width / 2]; }).sort((a, b) => a[0] - b[0]);
+      return Math.max(...o.map((a, i) => { const b = o[(i + 1) % o.length]; let d = b[0] - a[0]; if (d <= 0) d += 2 * Math.PI; return d * a[1] - a[2] - b[2]; })); })()""")
+    ok(0 < gap < 12, "the colour ring is a full circle with no gaps", gap)
+    cx, cy, r3 = rp.evaluate("(() => { const f = document.querySelector('#fab').getBoundingClientRect(); return [f.x + f.width / 2, f.y + f.height / 2, ringGeo.k * ringGeo.r3]; })()")
+    box = rp.locator("#size-dial").bounding_box()
+    rp.tap("#size-dial", position={"x": cx - box["x"], "y": cy - r3 - box["y"]}, force=True)
+    ok(rp.evaluate("tool.width.pen") == 15.5 and rp.evaluate("document.querySelector('.dock').classList.contains('open')"), "tapping the top of the size dial sets the pen halfway; the ring stays open")
     rp.locator(".swatch").nth(2).tap()
     rp.mouse.click(60, 300)  # the canvas: closes the ring
     ok(not rp.evaluate("document.querySelector('.dock').classList.contains('open')"), "tapping the canvas closes the ring")

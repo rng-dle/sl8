@@ -184,10 +184,30 @@
   .dock.ring.open .ring-item { opacity: 1; pointer-events: auto; }
   .dock.ring .ring-item:is(button, label) { border-radius: 50%; background: var(--surface); box-shadow: var(--shadow); }
   .dock.ring nav .ring-item { width: 46px; height: 46px; }
+  .dock.ring #options .icon-btn { width: 40px; height: 40px; } /* round, even where the bar narrows them */
   .dock.ring .ring-item[aria-pressed="true"]:not(.swatch) { background: color-mix(in srgb, var(--accent) 24%, var(--surface)); }
   .dock.ring .swatch.ring-item[aria-pressed="true"] { box-shadow: 0 0 0 3px var(--accent), var(--shadow); }
   .dock.ring.open .ring-item:disabled { opacity: .45; }
-  .dock.ring #width.ring-item { width: 120px; height: 34px; padding: 0 10px; border-radius: 999px; background: var(--surface); box-shadow: var(--shadow); }
+  /* dials, from the middle out: zoom just around the button (its % rides it; tap it for 100%), size around everything.
+     Both fill clockwise from the bottom; drag along one, or tap a spot on it. */
+  .dial { display: none; }
+  .dock.ring .dial:not([hidden]) { display: block; overflow: visible; }
+  .dock.ring.open .dial.ring-item { pointer-events: none; } /* only the band and the knob take touches */
+  .dial .track, .dial .fill, .dial .hit { fill: none; }
+  .dial .track { stroke: color-mix(in srgb, var(--text) 13%, transparent); stroke-width: 4; }
+  .dial .fill { stroke: var(--accent); stroke-width: 4; stroke-linecap: round; }
+  .dial .tick { stroke: color-mix(in srgb, var(--text) 50%, transparent); stroke-width: 2; stroke-linecap: round; }
+  .dial .hit { stroke: transparent; stroke-width: 32; }
+  .dock.ring.open .dial .hit { pointer-events: stroke; } /* the band only, never the inside of the circle */
+  .dock.ring.open .dial .knob { pointer-events: all; }
+  .dial :is(.hit, .knob) { cursor: pointer; touch-action: none; }
+  .dial .knob { filter: drop-shadow(0 1px 3px rgb(0 0 0 / .3)); }
+  .dial .kb { fill: var(--surface); stroke: var(--accent); stroke-width: 2.5; }
+  .dial .kd { fill: var(--kc, var(--text)); }
+  .dock.ring:has(#width:focus-visible) #size-dial .track { stroke: var(--accent); }
+  .dock.ring #width { position: absolute; left: 0; top: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; } /* the dial drives it; still there for keys */
+  .dock.ring #zoom.ring-item { display: inline-grid; width: 36px !important; height: 36px; min-width: 0; padding: 0; font-size: 10px; letter-spacing: -.02em;
+    box-shadow: 0 0 0 2px var(--accent), var(--shadow); touch-action: none; } /* the zoom knob: shown on phones too, styled like the size knob */
   /* guided tour: a card that never blocks the canvas, and a pulsing ring around what it's talking about */
   .tour, .picker { position: fixed; z-index: 27; left: 50%; top: calc(env(safe-area-inset-top, 0px) + 64px); translate: -50% 0; width: min(420px, calc(100vw - 24px));
     display: grid; gap: 10px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
@@ -456,6 +476,8 @@
 
 <div class="ring-scrim" id="ring-scrim" hidden></div>
 <div class="dock">
+  <svg class="dial" id="size-dial" hidden aria-hidden="true"><circle class="track"/><circle class="fill" transform="rotate(90)"/><circle class="hit"/><g class="knob"><circle class="kb" r="14"/><circle class="kd"/></g></svg>
+  <svg class="dial" id="zoom-dial" aria-hidden="true"><circle class="track"/><circle class="fill" transform="rotate(90)"/><line class="tick"/><circle class="hit"/></svg>
   <button class="fab" id="fab" type="button" aria-label="Tools" aria-expanded="false"></button>
   <div class="bar options" id="options">
     <div class="group" id="types"></div>

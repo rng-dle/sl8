@@ -31,7 +31,15 @@ const PEN_TYPES = {
   marker: ['Marker', '<path d="M9 15 5 19l-2 2h5l2-2"/><path d="m15.5 4.5 4 4L11 17l-4-4z"/><path d="m14 6 4 4"/>'],
   brush: ['Brush', '<path d="M18.4 2.6a2 2 0 0 1 3 3L12 15l-3-3z"/><path d="M9 12c-3 0-5 2-5 5 0 1.5-.5 3-2 4 4 0 9-1 9-6"/>'],
   nib: ['Calligraphy nib', '<path d="m12 19 7-7 3 3-7 7z"/><path d="m18 13-1.5-7.5L2 2l3.5 14.5L13 18z"/><path d="m2 2 7.6 7.6"/><circle cx="11" cy="11" r="2"/>'],
+  chisel: ['Chisel marker', '<path d="M14 4l6 6-9 9H5v-6z"/><path d="m11 7 6 6"/><path d="m5 19-2 2"/>'],
+  quill: ['Quill', '<path d="M12.67 19a2 2 0 0 0 1.42-.59l6.15-6.17a6 6 0 0 0-8.49-8.49L5.59 9.91A2 2 0 0 0 5 11.33V18a1 1 0 0 0 1 1z"/><path d="M16 8 2 22"/><path d="M17.5 15H9"/>'],
+  crayon: ['Crayon', '<path d="m6.5 13.5 8-8 4 4-8 8-5 1z"/><path d="M14.5 5.5 17 3l4 4-2.5 2.5"/><path d="M5 19l-2 2"/>'],
+  neon: ['Neon', '<path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z"/>'],
+  dash: ['Dashed', '<path d="m4 20 3-3"/><path d="m10.5 13.5 3-3"/><path d="m17 7 3-3"/>'],
 };
+// more colours for the ring: after the presets and recent ones, these fill the circle so it never has gaps
+const RING_COLORS = ['#facc15', '#fde68a', '#a3e635', '#bbf7d0', '#4d7c0f', '#06b6d4', '#bae6fd', '#38bdf8', '#1e3a8a', '#6366f1', '#c084fc', '#d946ef', '#fbcfe8',
+  '#f43f5e', '#831843', '#b45309', '#64748b', '#94a3b8', '#e2e8f0', '#ffffff', '#000000', '#0f766e', '#7f1d1d', '#a16207'];
 const WIDTH = { pen: [1, 30], hl: [6, 60], text: [12, 72] }; // slider range per tool
 const BATCH = 40; // must match MAX_OPS on the server
 const ERASER_PX = 10;
@@ -70,23 +78,33 @@ function widthAt(s, i) {
       const a = Math.atan2(p[i + 1] - p[j + 1], p[i] - p[j]);
       return 0.15 + 0.95 * Math.abs(Math.sin(a - Math.PI / 4));
     }
-    case 'marker': return 1;
+    case 'chisel': { // a flat tip held the other way from the nib, never thinner than a third
+      const j = i >= 3 ? i - 3 : Math.min(i + 3, p.length - 3);
+      return 0.35 + 0.7 * Math.abs(Math.sin(Math.atan2(p[i + 1] - p[j + 1], p[i] - p[j]) + Math.PI / 4));
+    }
+    case 'quill': { // fine, tapering at both ends, with or without pressure
+      const n = p.length / 3, k = i / 3, taper = Math.min(1, (k + 1) / 8, (n - k) / 8);
+      return (s.pr ? 0.4 + 0.9 * pr : 1) * (0.2 + 0.8 * taper);
+    }
+    case 'marker': case 'dash': return 1;
     case 'pencil': return s.pr ? 0.55 + 0.6 * pr : 0.9;
+    case 'crayon': return s.pr ? 0.8 + 0.4 * pr : 1;
     default: return s.pr ? pf(pr) : 1;
   }
 }
-const maxWidth = (s) => s.w * (s.pt === 'brush' ? 2.2 : s.pt === 'nib' ? 1.1 : s.pr ? 1.75 : 1);
+const maxWidth = (s) => s.w * (s.pt === 'neon' ? 3.5 : s.pt === 'brush' ? 2.2 : s.pt === 'nib' || s.pt === 'chisel' || s.pt === 'quill' ? 1.3 : s.pr ? 1.75 : 1); // neon: its glow
 // pencil grain: a speckled pattern of the ink colour, cached per canvas context and colour
 const grains = new Map();
-function pencilGrain(ctx, color) {
-  const key = (ctx === bctx ? 'b' : 'l') + color;
+function pencilGrain(ctx, color, waxy) {
+  const key = (ctx === bctx ? 'b' : 'l') + (waxy ? 'w' : '') + color;
   let pat = grains.get(key);
   if (!pat) {
-    const c = document.createElement('canvas');
-    c.width = c.height = 48;
+    const c = document.createElement('canvas'), n = waxy ? 64 : 48;
+    c.width = c.height = n;
     const g = c.getContext('2d');
     g.fillStyle = color;
-    for (let i = 0; i < 1100; i++) { g.globalAlpha = 0.15 + Math.random() * 0.85; g.fillRect(Math.random() * 48, Math.random() * 48, 1.3, 1.3); }
+    if (waxy) { g.globalAlpha = 0.35; g.fillRect(0, 0, n, n); } // crayon: a thin wax layer with bold flecks
+    for (let i = 0; i < (waxy ? 700 : 1100); i++) { g.globalAlpha = 0.15 + Math.random() * 0.85; const d = waxy ? 2.4 : 1.3; g.fillRect(Math.random() * n, Math.random() * n, d, d); }
     pat = ctx.createPattern(c, 'repeat');
     grains.set(key, pat);
   }
@@ -111,10 +129,12 @@ function bbox(s) {
 function drawStroke(ctx, s) {
   const p = s.p;
   const color = colorOf(s.c);
-  ctx.globalAlpha = s.hl ? palette.hlAlpha : s.pt === 'marker' ? 0.9 : s.pt === 'pencil' ? 0.85 : 1;
-  ctx.strokeStyle = ctx.fillStyle = s.pt === 'pencil' ? pencilGrain(ctx, color) : color;
+  ctx.globalAlpha = s.hl ? palette.hlAlpha : s.pt === 'marker' || s.pt === 'chisel' || s.pt === 'crayon' ? 0.9 : s.pt === 'pencil' ? 0.85 : 1;
+  ctx.strokeStyle = ctx.fillStyle = s.pt === 'pencil' || s.pt === 'crayon' ? pencilGrain(ctx, color, s.pt === 'crayon') : color;
   ctx.lineCap = ctx.lineJoin = 'round';
-  const even = s.pt === 'marker' || (!s.pr && s.pt !== 'brush' && s.pt !== 'nib');
+  if (s.pt === 'neon') { ctx.shadowColor = color; ctx.shadowBlur = s.w * 1.8 * ctx.getTransform().a; } // a shadow ignores the zoom, so scale it here
+  if (s.pt === 'dash') ctx.setLineDash([s.w * 2.2, s.w * 1.9]);
+  const even = s.pt === 'marker' || s.pt === 'dash' || (!s.pr && !['brush', 'nib', 'chisel', 'quill'].includes(s.pt));
   if (p.length === 3) {
     ctx.beginPath();
     ctx.arc(p[0], p[1], (s.w * widthAt(s, 0)) / 2, 0, Math.PI * 2);
@@ -143,6 +163,7 @@ function drawStroke(ctx, s) {
     }
   }
   ctx.globalAlpha = 1;
+  ctx.shadowBlur = 0; ctx.setLineDash([]);
 }
 
 function setCam(ctx) {
@@ -333,6 +354,7 @@ const handleAt = (it) => [(it.x + it.w) * cam.z + cam.x + 6, (it.y + it.h) * cam
 function paintView() {
   textsEl.style.transform = `translate(${cam.x}px, ${cam.y}px) scale(${cam.z})`;
   paintBackground();
+  if (ringGeo && ringOpen()) syncDials();
   $('#zoom').textContent = Math.round(cam.z * 100) + '%';
 }
 
@@ -1480,6 +1502,7 @@ function renderOptions() {
   $('#swatches').replaceChildren(...presets.map((c) => {
     const b = document.createElement('button');
     b.className = 'swatch';
+    b.dataset.c = c;
     b.setAttribute('aria-label', HEX.test(c) ? `Colour ${c}` : c === 'ink' ? 'Default ink' : c);
     b.setAttribute('aria-pressed', String(tool.color[t] === c));
     b.innerHTML = `<span style="--c: ${cssColor(c)}"></span>`;
@@ -1550,7 +1573,7 @@ $('#sound').onclick = () => {
 for (const b of document.querySelectorAll('[data-tool]')) b.onclick = () => setTool(b.dataset.tool);
 $('#undo').onclick = undo;
 $('#redo').onclick = redo;
-$('#zoom').onclick = () => zoomAt(board.clientWidth / 2, board.clientHeight / 2, 1 / (goal || cam).z, true);
+$('#zoom').onclick = (e) => { if (e.currentTarget.dataset.dragged) return delete e.currentTarget.dataset.dragged; zoomAt(board.clientWidth / 2, board.clientHeight / 2, 1 / (goal || cam).z, true); };
 
 /* ---------- ring: one floating button; the same tool buttons fan out in circles around it (Settings > Tools) ---------- */
 // Inner ring: the tools, undo and redo. Outer ring: the current tool's options, with the size slider along the bottom.
@@ -1574,6 +1597,7 @@ function layoutRing() {
   dock.style.setProperty('--k', k);
   if (!on) {
     dock.classList.remove('ring', 'open'); $('#ring-scrim').hidden = true;
+    ringSwatches(0);
     const w = $('nav.bar').getBoundingClientRect().width, room = innerWidth - 24; // a big size still keeps the bar on screen
     if (w > room) dock.style.setProperty('--k', (k * room) / w);
     return;
@@ -1583,22 +1607,45 @@ function layoutRing() {
     requestAnimationFrame(() => requestAnimationFrame(() => dock.classList.remove('still')));
   }
   // mark every item before measuring, so new swatches start hidden instead of flashing
-  for (const el of dock.querySelectorAll('nav.bar > button, #options button, #options label, #width')) el.classList.add('ring-item');
+  for (const el of dock.querySelectorAll('nav.bar > button, #options button, #options label, .dial')) el.classList.add('ring-item');
   const open = ringOpen();
   const shown = (el) => !el.closest('[hidden]') && getComputedStyle(el).display !== 'none';
-  const inner = [...dock.querySelectorAll('nav.bar > button')].filter(shown);
-  const outer = [...dock.querySelectorAll('#options button, #options label')].filter(shown);
-  const slider = shown($('#width')) ? $('#width') : null;
-  // radii at size 1, then scaled by the tool size (Settings > Tools), shrunk if needed so the open ring fits the screen
-  const gap = slider ? 1.3 : 0; // radians kept free at the bottom for the slider
-  const r1 = Math.max(88, (inner.length * 52) / (2 * Math.PI)), r2 = Math.max(148, r1 + 60, (outer.length * 38) / (2 * Math.PI - gap)); // r1 + 60: a clear gap between the two rings
-  const reach = outer.length || slider ? r2 + 26 : r1 + 30, m = 8;
+  const inner = [...dock.querySelectorAll('nav.bar > button')].filter((el) => el.id !== 'zoom' && shown(el));
+  let outer = [...dock.querySelectorAll('#options button, #options label')].filter((el) => !el.classList.contains('extra') && shown(el));
+  const sized = shown($('#width'));
+  // Rings from the middle out, at size 1 (then scaled by k): zoom dial, tools, this tool's options, size dial.
+  const r0 = 52, r1 = Math.max(106, (inner.length * 52) / (2 * Math.PI));
+  // the options ring: each option takes its own width plus an even gap. With colours on show it is always a full circle,
+  // topped up with more colours until there's no room left; without them (the eraser's switches) a short arc at the top.
+  const colours = !$('#swatches').hidden;
+  let r2 = r1 + 57;
+  const need = () => outer.reduce((a, el) => a + el.offsetWidth + 6, 0);
+  if (colours) {
+    const room = Math.floor((2 * Math.PI * r2 - need()) / 38); // a swatch is 32 plus the gap
+    ringSwatches(Math.max(0, room));
+    outer = [...dock.querySelectorAll('#options button, #options label')].filter(shown);
+  } else ringSwatches(0);
+  r2 = Math.max(r2, need() / (2 * Math.PI));
+  const w = outer.map((el) => el.offsetWidth), sum = w.reduce((a, b) => a + b, 0), natural = sum + outer.length * 6;
+  const C = 2 * Math.PI * r2, full = colours || outer.length >= 8, gapPx = full ? (C - sum) / outer.length : 6;
+  const r3 = r2 + 42, reach = sized ? r3 + 16 : outer.length ? r2 + 26 : r1 + 30, m = 8;
   if (open) k = Math.min(k, (Math.min(innerWidth, innerHeight) / 2 - m) / reach);
   dock.style.setProperty('--k', k);
   const place = (el, x, y) => { el.style.setProperty('--x', x * k + 'px'); el.style.setProperty('--y', y * k + 'px'); };
   inner.forEach((el, i) => { const a = -Math.PI / 2 + (i * 2 * Math.PI) / inner.length; place(el, r1 * Math.cos(a), r1 * Math.sin(a)); });
-  outer.forEach((el, i) => { const a = -Math.PI / 2 + ((i - (outer.length - 1) / 2) * 38) / r2; place(el, r2 * Math.cos(a), r2 * Math.sin(a)); });
-  if (slider) place(slider, 0, r2);
+  const a0 = -Math.PI / 2 - (full ? C : natural) / 2 / r2;
+  let s = 0;
+  outer.forEach((el, i) => {
+    const a = a0 + (s + gapPx / 2 + w[i] / 2) / r2;
+    s += w[i] + gapPx;
+    place(el, r2 * Math.cos(a), r2 * Math.sin(a));
+  });
+  $('#size-dial').toggleAttribute('hidden', !sized); // an svg has no .hidden property
+  ringGeo = { k, r0, r3 };
+  shapeDial($('#zoom-dial'), r0); shapeDial($('#size-dial'), r3);
+  const [ta, tb] = dialAt(zoomT(1), r0 - 6), [tc, td] = dialAt(zoomT(1), r0 + 6), tick = $('#zoom-dial .tick'); // 100%
+  tick.setAttribute('x1', ta); tick.setAttribute('y1', tb); tick.setAttribute('x2', tc); tick.setAttribute('y2', td);
+  syncDials();
   // open near an edge: the button slides in just far enough for the whole ring to fit
   const x = clamp((fabAt?.fx ?? 1) * innerWidth, 40 * k, innerWidth - 40 * k), y = clamp((fabAt?.fy ?? 1) * innerHeight, 40 * k, innerHeight - 56 * k);
   const fit = (v, size) => (size < 2 * (reach * k + m) ? size / 2 : clamp(v, reach * k + m, size - reach * k - m));
@@ -1612,6 +1659,86 @@ function openRing(on) {
   $('#fab').setAttribute('aria-expanded', String(on));
   layoutRing();
 }
+
+// the ring's extra colours, after the presets and recent ones (the bar shows only those)
+function ringSwatches(n) {
+  const box = $('#swatches'), have = box.querySelectorAll('.extra'), t = tool.name;
+  const shownNow = new Set([...box.querySelectorAll('.swatch:not(.extra)')].map((b) => b.dataset.c));
+  const list = RING_COLORS.filter((c) => !shownNow.has(c)).slice(0, n);
+  if (have.length === list.length && [...have].every((b, i) => b.dataset.c === list[i])) {
+    for (const b of have) b.setAttribute('aria-pressed', String(tool.color[t] === b.dataset.c));
+    return;
+  }
+  for (const b of have) b.remove();
+  for (const c of list) {
+    const b = document.createElement('button');
+    b.className = 'swatch extra ring-item';
+    b.dataset.c = c;
+    b.setAttribute('aria-label', `Colour ${c}`);
+    b.setAttribute('aria-pressed', String(tool.color[t] === c));
+    b.innerHTML = `<span style="--c: ${c}"></span>`;
+    b.onclick = () => { tool.color[tool.name] = c; saveTools(); renderOptions(); };
+    box.append(b);
+  }
+}
+
+/* ---------- dials: t runs 0 to 1 clockwise from the bottom of the circle ---------- */
+let ringGeo = null; // { k, r0, r3 } from the last layout
+const dialAt = (t, r) => [r * Math.cos(Math.PI / 2 + t * 2 * Math.PI), r * Math.sin(Math.PI / 2 + t * 2 * Math.PI)];
+const zoomLog = () => [Math.log(clampZ(1e-9)), Math.log(clampZ(1e9))]; // the zoom range, on a log scale
+const zoomT = (z) => { const [a, b] = zoomLog(); return (Math.log(z) - a) / (b - a); };
+function shapeDial(svg, r) {
+  const R = r + 18;
+  svg.setAttribute('width', 2 * R); svg.setAttribute('height', 2 * R); svg.setAttribute('viewBox', `${-R} ${-R} ${2 * R} ${2 * R}`);
+  for (const c of svg.querySelectorAll('.track, .fill, .hit')) c.setAttribute('r', r);
+}
+const fillDial = (svg, r, t) => { const c = 2 * Math.PI * r; svg.querySelector('.fill').setAttribute('stroke-dasharray', `${t * c} ${c}`); };
+function syncDials() { // the zoom % rides its dial; the size knob shows the width in the current colour
+  if (!ringGeo || !$('.dock').classList.contains('ring')) return;
+  const { k, r0, r3 } = ringGeo, zt = zoomT(cam.z), [zx, zy] = dialAt(zt, r0), zb = $('#zoom');
+  zb.style.setProperty('--x', zx * k + 'px'); zb.style.setProperty('--y', zy * k + 'px');
+  fillDial($('#zoom-dial'), r0, zt);
+  const w = $('#width'), st = (w.value - w.min) / (w.max - w.min || 1), [sx, sy] = dialAt(st, r3), sd = $('#size-dial');
+  fillDial(sd, r3, st);
+  sd.querySelector('.knob').setAttribute('transform', `translate(${sx} ${sy})`);
+  sd.querySelector('.kd').setAttribute('r', 2.5 + st * 7.5);
+  sd.style.setProperty('--kc', cssColor(tool.color[tool.name] || 'ink'));
+}
+// drag along a dial, or tap a spot on it; the ends meet at the bottom, and a drag holds there instead of wrapping round
+function dialInput(el, set, dragOnly) {
+  let last = null, start = null;
+  const at = (e) => {
+    const f = $('#fab').getBoundingClientRect(), a = Math.atan2(e.clientY - f.y - f.height / 2, e.clientX - f.x - f.width / 2);
+    let v = ((((a - Math.PI / 2) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)) / (2 * Math.PI);
+    if (last != null && Math.abs(v - last) > 0.5) v = last > 0.5 ? 1 : 0;
+    return (last = v);
+  };
+  el.addEventListener('pointerdown', (e) => {
+    e.target.setPointerCapture(e.pointerId);
+    start = [e.clientX, e.clientY]; last = null; delete el.dataset.dragged;
+    if (!dragOnly) set(at(e), true);
+  });
+  el.addEventListener('pointermove', (e) => {
+    if (!start || !e.target.hasPointerCapture?.(e.pointerId)) return;
+    if (dragOnly && !el.dataset.dragged && Math.hypot(e.clientX - start[0], e.clientY - start[1]) < 5) return;
+    el.dataset.dragged = '1';
+    set(at(e), false);
+  });
+  el.addEventListener('pointerup', () => { start = null; });
+}
+const setZoomT = (t, tap) => {
+  const [a, b] = zoomLog(), t100 = zoomT(1);
+  if (Math.abs(t - t100) < 0.012) t = t100; // a little pull toward 100%
+  zoomAt(board.clientWidth / 2, board.clientHeight / 2, Math.exp(a + t * (b - a)) / (tap ? (goal || cam).z : cam.z), tap);
+};
+dialInput($('#zoom-dial'), setZoomT);
+dialInput($('#zoom'), setZoomT, true); // the % itself: drag it round; a tap still means 100%
+dialInput($('#size-dial'), (t) => {
+  const w = $('#width'), step = Number(w.step) || 1, lo = Number(w.min), hi = Number(w.max);
+  w.value = Math.min(hi, lo + Math.round((t * (hi - lo)) / step) * step);
+  w.dispatchEvent(new Event('input', { bubbles: true }));
+});
+$('#width').addEventListener('input', syncDials);
 
 // tap to open; drag to move it anywhere
 let fabDrag = null;
@@ -1637,7 +1764,7 @@ $('#fab').addEventListener('click', (e) => { if (e.detail === 0) openRing(!ringO
 $('#ring-scrim').addEventListener('pointerdown', (e) => { e.preventDefault(); openRing(false); });
 // tools with nothing more to choose close the ring; drawing tools keep it open for their colours and sizes
 $('nav.bar').addEventListener('click', (e) => {
-  const b = e.target.closest('[data-tool], #zoom, #media-add, #music-btn, #mm-btn');
+  const b = e.target.closest('[data-tool], #media-add, #music-btn, #mm-btn');
   if (b && ringOpen() && !['pen', 'hl', 'eraser', 'text'].includes(b.dataset.tool)) openRing(false);
 });
 addEventListener('keydown', (e) => { if (e.key === 'Escape' && ringOpen()) openRing(false); });
