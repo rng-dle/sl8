@@ -178,9 +178,10 @@
     pointer-events: auto; touch-action: none; cursor: pointer; scale: var(--k, 1); transition: scale .15s; }
   .dock.ring .fab svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   .dock.ring.open .fab { scale: calc(.86 * var(--k, 1)); }
-  .dock.ring .ring-item { position: absolute; left: 0; top: 0; translate: -50% -50%; transform: translate(var(--x, 0), var(--y, 0)) scale(calc(var(--s, .4) * var(--k, 1)));
-    opacity: 0; pointer-events: none; transition: transform .24s cubic-bezier(.2,.9,.25,1.15) var(--d, 0s), opacity .16s var(--d, 0s); }
-  .dock.ring.open .ring-item { --s: 1; opacity: 1; pointer-events: auto; }
+  /* the tools stay in their places and just fade in and out; nothing flies out of the button */
+  .dock.ring .ring-item { position: absolute; left: 0; top: 0; translate: -50% -50%; transform: translate(var(--x, 0), var(--y, 0)) scale(var(--k, 1));
+    opacity: 0; pointer-events: none; transition: opacity .12s; }
+  .dock.ring.open .ring-item { opacity: 1; pointer-events: auto; }
   .dock.ring .ring-item:is(button, label) { border-radius: 50%; background: var(--surface); box-shadow: var(--shadow); }
   .dock.ring nav .ring-item { width: 46px; height: 46px; }
   .dock.ring .ring-item[aria-pressed="true"]:not(.swatch) { background: color-mix(in srgb, var(--accent) 24%, var(--surface)); }

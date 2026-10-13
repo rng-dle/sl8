@@ -1582,7 +1582,7 @@ function layoutRing() {
     dock.classList.add('ring', 'still');
     requestAnimationFrame(() => requestAnimationFrame(() => dock.classList.remove('still')));
   }
-  // mark every item before measuring, so new swatches start folded instead of fading out
+  // mark every item before measuring, so new swatches start hidden instead of flashing
   for (const el of dock.querySelectorAll('nav.bar > button, #options button, #options label, #width')) el.classList.add('ring-item');
   const open = ringOpen();
   const shown = (el) => !el.closest('[hidden]') && getComputedStyle(el).display !== 'none';
@@ -1595,12 +1595,7 @@ function layoutRing() {
   const reach = outer.length || slider ? r2 + 26 : r1 + 30, m = 8;
   if (open) k = Math.min(k, (Math.min(innerWidth, innerHeight) / 2 - m) / reach);
   dock.style.setProperty('--k', k);
-  let n = 0;
-  const place = (el, x, y) => {
-    el.style.setProperty('--x', (open ? x * k : 0) + 'px');
-    el.style.setProperty('--y', (open ? y * k : 0) + 'px');
-    el.style.setProperty('--d', (open ? n++ * 0.012 : 0) + 's'); // a quick stagger as they fan out
-  };
+  const place = (el, x, y) => { el.style.setProperty('--x', x * k + 'px'); el.style.setProperty('--y', y * k + 'px'); };
   inner.forEach((el, i) => { const a = -Math.PI / 2 + (i * 2 * Math.PI) / inner.length; place(el, r1 * Math.cos(a), r1 * Math.sin(a)); });
   outer.forEach((el, i) => { const a = -Math.PI / 2 + ((i - (outer.length - 1) / 2) * 38) / r2; place(el, r2 * Math.cos(a), r2 * Math.sin(a)); });
   if (slider) place(slider, 0, r2);
