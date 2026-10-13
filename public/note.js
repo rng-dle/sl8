@@ -1591,7 +1591,7 @@ function layoutRing() {
   const slider = shown($('#width')) ? $('#width') : null;
   // radii at size 1, then scaled by the tool size (Settings > Tools), shrunk if needed so the open ring fits the screen
   const gap = slider ? 1.3 : 0; // radians kept free at the bottom for the slider
-  const r1 = Math.max(88, (inner.length * 52) / (2 * Math.PI)), r2 = Math.max(148, (outer.length * 38) / (2 * Math.PI - gap));
+  const r1 = Math.max(88, (inner.length * 52) / (2 * Math.PI)), r2 = Math.max(148, r1 + 60, (outer.length * 38) / (2 * Math.PI - gap)); // r1 + 60: a clear gap between the two rings
   const reach = outer.length || slider ? r2 + 26 : r1 + 30, m = 8;
   if (open) k = Math.min(k, (Math.min(innerWidth, innerHeight) / 2 - m) / reach);
   dock.style.setProperty('--k', k);
