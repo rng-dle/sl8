@@ -137,7 +137,13 @@
         <label><input type="radio" name="toolbar" value="ring"><span>Ring</span></label>
         <label><input type="radio" name="toolbar" value="bar"><span>Bar</span></label>
       </div>
-      <p class="help sub">Ring is one round button you can drag anywhere; tap it and your tools open in a circle around it. Bar keeps them along the bottom. Very small screens always use the bar.</p>
+      <div class="seg" role="radiogroup" aria-label="Tool size">
+        <label><input type="radio" name="toolsize" value="0.8"><span>Small</span></label>
+        <label><input type="radio" name="toolsize" value=""><span>Medium</span></label>
+        <label><input type="radio" name="toolsize" value="1.25"><span>Large</span></label>
+        <label><input type="radio" name="toolsize" value="1.5"><span>Extra large</span></label>
+      </div>
+      <p class="help sub">Ring is one round button you can drag anywhere; tap it and your tools open in a circle around it. Bar keeps them along the bottom. Very small screens always use the bar. Size sets how big the buttons are in either one.</p>
     </div>
     <div class="pref"><h3>Logo colours</h3>
       <div class="row">
@@ -391,6 +397,7 @@ bindPref('theme', 'sl8:theme', '', applyTheme);
 bindPref('bg', 'sl8:bg', 'dots');
 bindPref('reveal', 'sl8:revealMode', 'full');
 bindPref('toolbar', 'sl8:toolbar', 'ring');
+bindPref('toolsize', 'sl8:toolSize', '');
 bindPref('hints', 'sl8:hints', 'on');
 // minimap (this device): on or off, one of 21 shapes, and your own border and background colours
 bindPref('mm', 'sl8:minimap', 'on');

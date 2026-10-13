@@ -1492,6 +1492,7 @@ $('#zoom').onclick = () => zoomAt(board.clientWidth / 2, board.clientHeight / 2,
 // Inner ring: the tools, undo and redo. Outer ring: the current tool's options, with the size slider along the bottom.
 const ringOn = () => store.get('sl8:toolbar') !== 'bar' && Math.min(innerWidth, innerHeight) >= 360; // small screens keep the bar
 const ringOpen = () => $('.dock').classList.contains('open');
+const toolK = () => Math.min(1.5, Math.max(0.75, Number(store.get('sl8:toolSize')) || 1)); // Settings > Tools > Size
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 let fabAt = store.get('sl8:fab'); // { fx, fy }: fractions of the window, so it stays put through rotation
 
@@ -1505,7 +1506,14 @@ function ringSync() {
 
 function layoutRing() {
   const dock = $('.dock'), on = ringOn();
-  if (!on) { dock.classList.remove('ring', 'open'); $('#ring-scrim').hidden = true; return; }
+  let k = toolK();
+  dock.style.setProperty('--k', k);
+  if (!on) {
+    dock.classList.remove('ring', 'open'); $('#ring-scrim').hidden = true;
+    const w = $('nav.bar').getBoundingClientRect().width, room = innerWidth - 24; // a big size still keeps the bar on screen
+    if (w > room) dock.style.setProperty('--k', (k * room) / w);
+    return;
+  }
   if (!dock.classList.contains('ring')) { // switching from the bar: start folded, without animating out of it
     dock.classList.add('ring', 'still');
     requestAnimationFrame(() => requestAnimationFrame(() => dock.classList.remove('still')));
@@ -1517,21 +1525,24 @@ function layoutRing() {
   const inner = [...dock.querySelectorAll('nav.bar > button')].filter(shown);
   const outer = [...dock.querySelectorAll('#options button, #options label')].filter(shown);
   const slider = shown($('#width')) ? $('#width') : null;
-  const r1 = Math.max(88, (inner.length * 52) / (2 * Math.PI)), step = 38, gap = slider ? 1.3 : 0; // gap: radians kept free at the bottom for the slider
-  const r2 = Math.max(148, (outer.length * step) / (2 * Math.PI - gap));
+  // radii at size 1, then scaled by the tool size (Settings > Tools), shrunk if needed so the open ring fits the screen
+  const gap = slider ? 1.3 : 0; // radians kept free at the bottom for the slider
+  const r1 = Math.max(88, (inner.length * 52) / (2 * Math.PI)), r2 = Math.max(148, (outer.length * 38) / (2 * Math.PI - gap));
+  const reach = outer.length || slider ? r2 + 26 : r1 + 30, m = 8;
+  if (open) k = Math.min(k, (Math.min(innerWidth, innerHeight) / 2 - m) / reach);
+  dock.style.setProperty('--k', k);
   let n = 0;
   const place = (el, x, y) => {
-    el.style.setProperty('--x', (open ? x : 0) + 'px');
-    el.style.setProperty('--y', (open ? y : 0) + 'px');
+    el.style.setProperty('--x', (open ? x * k : 0) + 'px');
+    el.style.setProperty('--y', (open ? y * k : 0) + 'px');
     el.style.setProperty('--d', (open ? n++ * 0.012 : 0) + 's'); // a quick stagger as they fan out
   };
   inner.forEach((el, i) => { const a = -Math.PI / 2 + (i * 2 * Math.PI) / inner.length; place(el, r1 * Math.cos(a), r1 * Math.sin(a)); });
-  outer.forEach((el, i) => { const a = -Math.PI / 2 + ((i - (outer.length - 1) / 2) * step) / r2; place(el, r2 * Math.cos(a), r2 * Math.sin(a)); });
+  outer.forEach((el, i) => { const a = -Math.PI / 2 + ((i - (outer.length - 1) / 2) * 38) / r2; place(el, r2 * Math.cos(a), r2 * Math.sin(a)); });
   if (slider) place(slider, 0, r2);
   // open near an edge: the button slides in just far enough for the whole ring to fit
-  const reach = outer.length || slider ? r2 + 26 : r1 + 30, m = 8;
-  const x = clamp((fabAt?.fx ?? 1) * innerWidth, 40, innerWidth - 40), y = clamp((fabAt?.fy ?? 1) * innerHeight, 40, innerHeight - 56);
-  const fit = (v, size) => (size < 2 * (reach + m) ? size / 2 : clamp(v, reach + m, size - reach - m));
+  const x = clamp((fabAt?.fx ?? 1) * innerWidth, 40 * k, innerWidth - 40 * k), y = clamp((fabAt?.fy ?? 1) * innerHeight, 40 * k, innerHeight - 56 * k);
+  const fit = (v, size) => (size < 2 * (reach * k + m) ? size / 2 : clamp(v, reach * k + m, size - reach * k - m));
   dock.style.setProperty('--fx', (open ? fit(x, innerWidth) : x) + 'px');
   dock.style.setProperty('--fy', (open ? fit(y, innerHeight) : y) + 'px');
 }

@@ -226,6 +226,17 @@ with sync_playwright() as p:
     mp4ok = pg.evaluate("""(bytes) => fetch('/api/files', { method: 'POST', headers: { 'content-type': 'video/mp4' }, body: new Uint8Array(bytes) }).then((r) => r.status)""", list(open(mp4, "rb").read()))
     ok(mp4ok == 201 and up == 415, "MP4 videos are accepted; empty uploads are refused")
 
+    # on a PC the hand drags the sheet around; Settings > Tools > Size scales the bar
+    pg.goto(home); pg.wait_for_selector("#status:text('Saved')")
+    pg.click("[data-tool=hand]"); c0 = pg.evaluate("({...cam})")
+    pg.mouse.move(640, 300); pg.mouse.down(); pg.mouse.move(740, 350, steps=5); pg.mouse.up()
+    c1 = pg.evaluate("({...cam})")
+    ok(round(c1["x"] - c0["x"]) == 100 and round(c1["y"] - c0["y"]) == 50, "on a PC the hand drags the sheet around", f"{c0} -> {c1}")
+    bw = lambda: pg.evaluate("document.querySelector('nav.bar').getBoundingClientRect().width")
+    w1 = bw(); pg.evaluate("store.set('sl8:toolSize', '1.5'); layoutRing()")
+    ok(abs(bw() / w1 - 1.5) < 0.03, "the tool size setting scales the bar")
+    pg.evaluate("store.set('sl8:toolSize', null); layoutRing()")
+
     # the stretch-and-tear opening on a phone
     m = br.new_context(extra_http_headers=RUN_IP, viewport={"width": 390, "height": 844}, device_scale_factor=2, has_touch=True, is_mobile=True, storage_state=ctx.storage_state())
     mp = m.new_page()
@@ -308,6 +319,8 @@ with sync_playwright() as p:
     rp.tap("#fab"); rp.wait_for_timeout(350)
     ok(moved and moved["fx"] < 0.2 and rp.evaluate("document.querySelector('.dock').classList.contains('open')") and rp.evaluate(onscreen), "the button can be dragged anywhere, and the ring still opens fully on screen")
     rp.screenshot(path=f"{OUT}/s6-ring-left.png")
+    rp.evaluate("store.set('sl8:toolSize', '1.5'); layoutRing()"); rp.wait_for_timeout(350)
+    ok(rp.evaluate(onscreen), "an extra large ring still opens fully on a phone screen")
     rp.keyboard.press("Escape")
     ok(not errors, "no script errors", "; ".join(errors[:3]))
     br.close()
