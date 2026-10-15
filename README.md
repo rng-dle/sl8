@@ -38,7 +38,7 @@ npx wrangler dev --port 8787 --local-upstream 127.0.0.1:8787
 Then, in another terminal:
 
 ```
-bash test/smoke-test.sh && node test/ai-test.mjs && node test/account-test.mjs && node test/share-test.mjs && node test/market-test.mjs && python3 test/pen-test.py && python3 test/journey.py && python3 test/share-journey.py
+bash test/smoke-test.sh && node test/ai-test.mjs && node test/account-test.mjs && node test/share-test.mjs && node test/share-follow-test.mjs && node test/market-test.mjs && python3 test/pen-test.py && python3 test/journey.py && python3 test/share-journey.py
 ```
 
 - `smoke-test.sh`: accounts, saving, isolation between users, lockout (per account and network, so strangers can't lock you out), logout.
@@ -46,6 +46,7 @@ bash test/smoke-test.sh && node test/ai-test.mjs && node test/account-test.mjs &
 - `ai-test.mjs`: AI connections, encryption at rest, OpenRouter sign-in (PKCE), scopes, retrieval, every error state, the daily cap.
 - `account-test.mjs`: email confirmation (sharing waits for it), password reset by email, change password, log out everywhere, export, search, account deletion, rate limits, the 404 page.
 - `share-test.mjs`: share links (whole canvas or squares, view or edit), area checks on every write, files through links, catching up on changes and deletes.
+- `share-follow-test.mjs`: links that also open the canvases their portals point to (opt-in, whole canvas only): what they reach, what stays private, view vs edit, turning off.
 - `market-test.mjs`: the marketplace at `/market`: browsing signed out, publishing a canvas or JSON as a template (photos, videos and portals left out), using a template or theme, taking down.
 - `pen-test.py`: simulated S Pen with a resting palm, and the "Draw with finger" toggle.
 - `share-journey.py`: sharing chosen squares in a browser, someone without an account editing inside them, the owner's canvas and second device picking changes up, view links.

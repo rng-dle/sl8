@@ -493,33 +493,51 @@ async function changes(env, noteId, since, area) {
 }
 
 // Someone opening a share link. No account needed: the link is the key.
-async function shared(req, env, ctx, url, token, ops, fileId, body) {
-  const row = await env.DB.prepare('SELECT s.note_id, s.mode, s.area, n.user_id, n.title FROM shares s JOIN notes n ON n.id = s.note_id WHERE s.token = ?').bind(token).first();
+// The canvases a following link can open: its own, plus everything reachable through portals, same owner only. id -> title.
+async function linkedCanvases(env, row) {
+  const out = new Map([[row.note_id, row.title]]);
+  for (let queue = [row.note_id]; queue.length && out.size < 200;) {
+    const { results } = await env.DB.prepare(
+      `SELECT DISTINCT n.id, n.title FROM items i JOIN notes n ON n.id = json_extract(i.data, '$.target') AND n.user_id = ?
+       WHERE i.note_id IN (SELECT value FROM json_each(?)) AND json_extract(i.data, '$.kind') = 'portal'`).bind(row.user_id, JSON.stringify(queue)).all();
+    queue = results.filter((r) => !out.has(r.id)).map((r) => (out.set(r.id, r.title), r.id));
+  }
+  return out;
+}
+
+// Someone opening a share link. No account needed: the link is the key.
+// canvas: a canvas reached through a portal; only links made with "follow portals" (whole canvas) may open one.
+async function shared(req, env, ctx, url, token, canvas, ops, fileId, body) {
+  const row = await env.DB.prepare('SELECT s.note_id, s.mode, s.area, n.user_id, n.title, f.token AS follow FROM shares s JOIN notes n ON n.id = s.note_id LEFT JOIN share_follow f ON f.token = s.token WHERE s.token = ?').bind(token).first();
   if (!row) return fail(404, 'This link was turned off, or the canvas was deleted.');
+  const follow = !!row.follow && row.area === '*';
+  const reach = follow ? await linkedCanvases(env, row) : null;
+  if (canvas && !reach?.has(canvas)) return fail(404, 'That canvas is not part of this link.');
+  const noteId = canvas || row.note_id, title = reach?.get(noteId) ?? row.title;
   const area = row.area === '*' ? '*' : JSON.parse(row.area).map((c) => c.split('/').map(Number));
   const method = req.method;
   if (ops) {
     if (method !== 'POST') return fail(404, 'Not found.');
     if (row.mode !== 'write') return fail(403, 'This link can view only.');
-    return saved(ctx, env, row.note_id, body, saveOps(env, row.note_id, body.ops, { area }));
+    return saved(ctx, env, noteId, body, saveOps(env, noteId, body.ops, { area }));
   }
   if (method !== 'GET') return fail(404, 'Not found.');
-  if (!fileId && req.headers.get('upgrade') === 'websocket') return join(env, row.note_id, req, false);
+  if (!fileId && req.headers.get('upgrade') === 'websocket') return join(env, noteId, req, false);
   if (fileId) {
     // only files this link can see: the background, or a photo or video in its area
     const [style, rows] = await Promise.all([
-      env.DB.prepare('SELECT style FROM canvas_style WHERE note_id = ?').bind(row.note_id).first('style'), loadItems(env, row.note_id)]);
+      env.DB.prepare('SELECT style FROM canvas_style WHERE note_id = ?').bind(noteId).first('style'), loadItems(env, noteId)]);
     const byId = new Map(rows.map((r) => [r.it.id, r.it]));
     const used = JSON.parse(style || '{}').image === fileId || rows.some((r) => r.it.file === fileId && shown(area, byId, r.it));
     return used ? serveFile(req, env, row.user_id, fileId) : fail(404, 'File not found.');
   }
   const since = Number(url.searchParams.get('since'));
-  if (since) return changes(env, row.note_id, since, area);
+  if (since) return changes(env, noteId, since, area);
   const [style, rows] = await Promise.all([
-    env.DB.prepare('SELECT style FROM canvas_style WHERE note_id = ?').bind(row.note_id).first('style'), loadItems(env, row.note_id)]);
+    env.DB.prepare('SELECT style FROM canvas_style WHERE note_id = ?').bind(noteId).first('style'), loadItems(env, noteId)]);
   const byId = new Map(rows.map((r) => [r.it.id, r.it]));
-  const note = { title: row.title, style: JSON.parse(style || '{}') };
-  const share = { mode: row.mode, area: row.area === '*' ? '*' : JSON.parse(row.area) };
+  const note = { title, style: JSON.parse(style || '{}') };
+  const share = { mode: row.mode, area: row.area === '*' ? '*' : JSON.parse(row.area), ...(follow && { follow: true, root: row.note_id, canvases: Object.fromEntries(reach) }) };
   return json(`{"now":${Date.now()},"note":${JSON.stringify(note)},"share":${JSON.stringify(share)},"items":[${rows.filter((r) => shown(area, byId, r.it)).map((r) => r.data).join(',')}]}`);
 }
 
@@ -630,8 +648,8 @@ async function api(req, env, ctx, url) {
 
   if (path === '/api/market' && method === 'GET') return marketList(req, env);
 
-  const sh = path.match(/^\/api\/shared\/([a-f0-9]{64})(?:(\/ops)|\/files\/([0-9a-f-]{36}))?$/);
-  if (sh) return shared(req, env, ctx, url, sh[1], sh[2], sh[3], body);
+  const sh = path.match(/^\/api\/shared\/([a-f0-9]{64})(?:\/c\/([\w-]{1,64}))?(?:(\/ops)|\/files\/([0-9a-f-]{36}))?$/);
+  if (sh) return shared(req, env, ctx, url, sh[1], sh[2], sh[3], sh[4], body);
 
   const user = await currentUser(req, env);
   if (!user) return fail(401, 'Log in to continue.');
@@ -661,6 +679,7 @@ async function api(req, env, ctx, url) {
     const mine = 'SELECT id FROM notes WHERE user_id = ?';
     await env.DB.batch([
       env.DB.prepare(`DELETE FROM items WHERE note_id IN (${mine})`).bind(user.id),
+      env.DB.prepare(`DELETE FROM share_follow WHERE token IN (SELECT token FROM shares WHERE note_id IN (${mine}))`).bind(user.id),
       ...['canvas_style', 'shares', 'tombstones'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE note_id IN (${mine})`).bind(user.id)),
       ...['notes', 'ai_connections', 'ai_usage', 'resets', 'verifies', 'sessions'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(user.id)),
       env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id),
@@ -795,22 +814,30 @@ async function api(req, env, ctx, url) {
 
     if (shares) {
       if (token && method === 'DELETE') {
-        await env.DB.prepare('DELETE FROM shares WHERE token = ? AND note_id = ?').bind(token, noteId).run();
+        await env.DB.batch([
+          env.DB.prepare('DELETE FROM share_follow WHERE token IN (SELECT token FROM shares WHERE token = ? AND note_id = ?)').bind(token, noteId),
+          env.DB.prepare('DELETE FROM shares WHERE token = ? AND note_id = ?').bind(token, noteId),
+        ]);
         return json({ ok: true });
       }
       if (!token && method === 'GET') {
-        const { results } = await env.DB.prepare('SELECT token, mode, area, created_at FROM shares WHERE note_id = ? ORDER BY created_at').bind(noteId).all();
-        return json({ shares: results.map((s) => ({ ...s, area: s.area === '*' ? '*' : JSON.parse(s.area) })) });
+        const { results } = await env.DB.prepare('SELECT s.token, s.mode, s.area, s.created_at, f.token IS NOT NULL AS follow FROM shares s LEFT JOIN share_follow f ON f.token = s.token WHERE s.note_id = ? ORDER BY s.created_at').bind(noteId).all();
+        return json({ shares: results.map((s) => ({ ...s, follow: !!s.follow && s.area === '*', area: s.area === '*' ? '*' : JSON.parse(s.area) })) });
       }
       if (!token && method === 'POST') {
         if (!user.verified) return json({ error: `Verify your email first: open the link we sent to ${user.email}.`, kind: 'verify' }, 403);
         const area = cleanArea(body.area);
         if (!area) return fail(400, `Choose the whole canvas or between 1 and ${MAX_AREA} squares.`);
         if (body.mode !== 'read' && body.mode !== 'write') return fail(400, 'Choose view or edit.');
+        const follow = body.follow === true;
+        if (follow && area !== '*') return fail(400, 'Opening linked canvases works for the whole canvas, not chosen squares.');
         const n = await env.DB.prepare('SELECT count(*) AS n FROM shares WHERE note_id = ?').bind(noteId).first('n');
         if (n >= 50) return fail(409, 'This canvas has 50 links. Turn some off to make more.');
-        const s = { token: hex(crypto.getRandomValues(new Uint8Array(32))), mode: body.mode, area, created_at: Date.now() };
-        await env.DB.prepare('INSERT INTO shares VALUES (?, ?, ?, ?, ?)').bind(s.token, noteId, s.mode, area === '*' ? '*' : JSON.stringify(area), s.created_at).run();
+        const s = { token: hex(crypto.getRandomValues(new Uint8Array(32))), mode: body.mode, area, created_at: Date.now(), follow };
+        await env.DB.batch([
+          env.DB.prepare('INSERT INTO shares VALUES (?, ?, ?, ?, ?)').bind(s.token, noteId, s.mode, area === '*' ? '*' : JSON.stringify(area), s.created_at),
+          ...(follow ? [env.DB.prepare('INSERT INTO share_follow VALUES (?)').bind(s.token)] : []),
+        ]);
         return json({ share: s }, 201);
       }
       return fail(404, 'Not found.');
@@ -844,6 +871,7 @@ async function api(req, env, ctx, url) {
 
     if (!ops && method === 'DELETE') {
       await env.DB.batch([
+        env.DB.prepare('DELETE FROM share_follow WHERE token IN (SELECT token FROM shares WHERE note_id = ?)').bind(noteId),
         ...['canvas_style', 'shares', 'tombstones'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE note_id = ?`).bind(noteId)),
         env.DB.prepare('DELETE FROM items WHERE note_id = ?').bind(noteId),
         env.DB.prepare('DELETE FROM notes WHERE id = ?').bind(noteId),
