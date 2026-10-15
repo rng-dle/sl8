@@ -6,8 +6,13 @@ const params = new URLSearchParams(location.search);
 const noteId = params.get('id');
 // opened from a share link (?share=<token>): no account needed; `share` is { mode: 'read'|'write', area } once loaded
 const shareToken = /^[a-f0-9]{64}$/.test(params.get('share')) ? params.get('share') : null;
-const notePath = shareToken ? `/api/shared/${shareToken}` : `/api/notes/${noteId}`;
-const canvasKey = noteId || 'share:' + shareToken; // this device's camera and unsent changes are kept under it
+// ?canvas=<id>: a canvas reached through a portal, on a link made with "open linked canvases"
+const sharedCanvas = shareToken && /^[\w-]{1,64}$/.test(params.get('canvas')) ? params.get('canvas') : null;
+const notePath = shareToken ? `/api/shared/${shareToken}${sharedCanvas ? '/c/' + sharedCanvas : ''}` : `/api/notes/${noteId}`;
+const canvasKey = noteId || 'share:' + shareToken + (sharedCanvas ? ':' + sharedCanvas : ''); // this device's camera and unsent changes are kept under it
+let shareRoot = null; // the canvas a following link was made on
+const here = () => noteId || sharedCanvas || shareRoot; // this canvas's id
+const hrefTo = (id) => shareToken ? `/note?share=${shareToken}${id === shareRoot ? '' : '&canvas=' + encodeURIComponent(id)}` : '/note?id=' + encodeURIComponent(id);
 let share = null;
 // Dot-grid containers, the same maths as the server: level k squares are CELL * 2^k units, aligned to the origin,
 // so each splits into four one level down. An item belongs to the square its first point is in.
@@ -999,7 +1004,7 @@ function renderPortal(it) {
   Object.assign(el.style, { left: it.x + 'px', top: it.y + 'px', width: it.w + 'px', height: it.h + 'px' });
   const title = canvasTitles.get(it.target);
   el.classList.toggle('missing', title === undefined);
-  el.querySelector('.portal-title').textContent = title ?? 'This canvas was deleted';
+  el.querySelector('.portal-title').textContent = title ?? (shareToken ? 'Not shared in this link' : 'This canvas was deleted');
   el.querySelector('.portal-open').setAttribute('aria-label', `Open ${title}`);
 }
 // Leave this canvas, finishing any unsent saves first (anything still unsent stays on this device).
@@ -1018,8 +1023,8 @@ const trail = () => { try { return JSON.parse(sessionStorage.getItem('sl8:trail'
 const setTrail = (t) => { try { sessionStorage.setItem('sl8:trail', JSON.stringify(t.slice(-20))); } catch {} };
 async function openPortal(id) {
   const it = items.get(id);
-  if (!it || !canvasTitles.has(it.target)) return toast("That canvas doesn't exist anymore.");
-  setTrail([...trail().filter((t) => t.id !== noteId), { id: noteId, title: titleEl.value }]);
+  if (!it || !canvasTitles.has(it.target)) return toast(shareToken ? "That canvas isn't part of this link." : "That canvas doesn't exist anymore.");
+  setTrail([...trail().filter((t) => t.id !== here()), { id: here(), title: titleEl.value }]);
   const el = textEls.get(id);
   if (el && !matchMedia('(prefers-reduced-motion: reduce)').matches) { // dive into the portal
     const r = el.getBoundingClientRect();
@@ -1027,7 +1032,7 @@ async function openPortal(id) {
     board.animate([{ transform: 'scale(1)', opacity: 1 }, { transform: 'scale(3)', opacity: 0 }], { duration: 320, easing: 'cubic-bezier(.5,0,.75,0)', fill: 'forwards' });
     try { sessionStorage.setItem('sl8:arrive', '1'); } catch {}
   }
-  await Promise.all([leaveTo('/note?id=' + encodeURIComponent(it.target)), new Promise((r) => setTimeout(r, 300))]);
+  await Promise.all([leaveTo(hrefTo(it.target)), new Promise((r) => setTimeout(r, 300))]);
 }
 function addPortal(target) {
   const [x, y] = toWorld(board.clientWidth / 2 - PORTAL_W / 2 * cam.z, board.clientHeight * 0.4);
@@ -2233,7 +2238,7 @@ async function openShare(made) {
     $('#sh-none').hidden = shares.length > 0;
     $('#sh-list').replaceChildren(...shares.reverse().map((s) => {
       const li = document.createElement('li'), what = document.createElement('span');
-      what.textContent = `${s.mode === 'write' ? 'Can edit' : 'Can view'} · ${s.area === '*' ? 'whole canvas' : s.area.length === 1 ? '1 square' : `${s.area.length} squares`}`;
+      what.textContent = `${s.mode === 'write' ? 'Can edit' : 'Can view'} · ${s.area === '*' ? 'whole canvas' : s.area.length === 1 ? '1 square' : `${s.area.length} squares`}${s.follow ? ' · and linked canvases' : ''}`;
       const btn = (label, fn) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'btn quiet'; b.textContent = label; b.onclick = fn; return b; };
       li.append(what, btn('Copy', () => copyLink(shareUrl(s.token))), btn('Turn off', async () => {
         try { await api(`${notePath}/shares/${s.token}`, { method: 'DELETE' }); openShare(); } catch (e) { toast(e.message); }
@@ -2244,7 +2249,7 @@ async function openShare(made) {
 }
 async function createShare(area) {
   try {
-    const { share: s } = await api(`${notePath}/shares`, { method: 'POST', body: { mode: $('input[name=sh-mode]:checked').value, area } });
+    const { share: s } = await api(`${notePath}/shares`, { method: 'POST', body: { mode: $('input[name=sh-mode]:checked').value, area, follow: area === '*' && $('#sh-follow').checked } });
     await openShare(s);
     copyLink(shareUrl(s.token));
   } catch (e) {
@@ -2258,6 +2263,7 @@ $('#sh-resend').onclick = async () => {
   try { await api('/api/verify/resend', { method: 'POST' }); toast('Sent. Open the link in the email, then share again.'); } catch (e) { toast(e.message); }
 };
 $('#share-open').onclick = () => { $('#sh-verify').hidden = true; openShare(); };
+for (const r of document.querySelectorAll('input[name=sh-area]')) r.onchange = () => { $('#sh-follow-row').hidden = $('input[name=sh-area]:checked').value !== '*'; }; // chosen squares can't follow portals
 $('#sh-create').onclick = () => {
   if ($('input[name=sh-area]:checked').value === '*') return createShare('*');
   $('#share-menu').hidden = true;
@@ -2284,13 +2290,13 @@ function fitCells(cells) {
 // back to the canvas this one was opened from
 function showTrail() {
   const t = trail();
-  while (t.length && t.at(-1).id === noteId) t.pop(); // came back the way we went in
+  while (t.length && t.at(-1).id === here()) t.pop(); // came back the way we went in
   setTrail(t);
   const parent = t.at(-1);
   $('#trail').hidden = !parent;
   if (!parent) return;
   $('#trail-title').textContent = canvasTitles.get(parent.id) || parent.title || 'Back';
-  $('#trail').onclick = () => { setTrail(t.slice(0, -1)); leaveTo('/note?id=' + encodeURIComponent(parent.id)); };
+  $('#trail').onclick = () => { setTrail(t.slice(0, -1)); leaveTo(hrefTo(parent.id)); };
 }
 
 /* ---------- arrow labels ---------- */
@@ -2487,6 +2493,7 @@ async function start() {
     for (const n of notes) canvasTitles.set(n.id, n.title);
     if (linked) { // opened from a link: only what it allows
       share = linked;
+      if (share.follow) { shareRoot = share.root; for (const id in share.canvases) canvasTitles.set(id, share.canvases[id]); } // a link that opens linked canvases
       document.documentElement.dataset.share = share.mode; // hides account features (and every tool, for view links)
       if (share.mode === 'read') $('#hint').textContent = 'Nothing has been written here yet.';
       titleEl.readOnly = true;
@@ -2503,7 +2510,7 @@ async function start() {
     for (const [id, it] of store.get(pendingKey) || []) apply(id, it); // changes that never reached the server
     setStatus(share?.mode === 'read' ? 'View only' : pending.size ? 'Saving…' : 'Saved');
     updateHint();
-    if (!shareToken) showTrail();
+    if (!shareToken || share?.follow) showTrail();
     since = now;
     poll();
     connectLive();
