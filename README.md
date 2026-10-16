@@ -38,7 +38,7 @@ npx wrangler dev --port 8787 --local-upstream 127.0.0.1:8787
 Then, in another terminal:
 
 ```
-bash test/smoke-test.sh && node test/ai-test.mjs && node test/account-test.mjs && node test/share-test.mjs && node test/share-follow-test.mjs && node test/market-test.mjs && python3 test/pen-test.py && python3 test/journey.py && python3 test/share-journey.py
+bash test/smoke-test.sh && node test/ai-test.mjs && node test/account-test.mjs && node test/share-test.mjs && node test/share-follow-test.mjs && node test/market-test.mjs && node test/voice-test.mjs && python3 test/pen-test.py && python3 test/journey.py && python3 test/share-journey.py && python3 test/voice-journey.py
 ```
 
 - `smoke-test.sh`: accounts, saving, isolation between users, lockout (per account and network, so strangers can't lock you out), logout.
@@ -48,6 +48,8 @@ bash test/smoke-test.sh && node test/ai-test.mjs && node test/account-test.mjs &
 - `share-test.mjs`: share links (whole canvas or squares, view or edit), area checks on every write, files through links, catching up on changes and deletes.
 - `share-follow-test.mjs`: links that also open the canvases their portals point to (opt-in, whole canvas only): what they reach, what stays private, view vs edit, turning off.
 - `market-test.mjs`: the marketplace at `/market`: browsing signed out, publishing a canvas or JSON as a template (photos, videos and portals left out), using a template or theme, taking down.
+- `voice-test.mjs`: recordings as files (WebM, MP4, Ogg, MP3, WAV), voice items and transcripts, byte-range playback, links can't add them.
+- `voice-journey.py`: record from a fake microphone in a browser, the capsule appears, survives a reload, plays and pauses.
 - `pen-test.py`: simulated S Pen with a resting palm, and the "Draw with finger" toggle.
 - `share-journey.py`: sharing chosen squares in a browser, someone without an account editing inside them, the owner's canvas and second device picking changes up, view links.
 - `tour-test.py`: the guided tour from setup, every step, on a phone, a phone that has used a pen, and a desktop; double-tap to write; Show me around.
@@ -64,6 +66,7 @@ The Python tests need `pip install playwright && playwright install chromium`.
 ## Using it
 
 - **Select tool (V):** drag a box to select ink and text, drag to move, Delete to remove. Double-tap or double-click empty space to write.
+- **Voice notes (mic button):** tap to record, tap again to stop (ten minutes at most). A capsule appears on the canvas with play/pause; it syncs like any other item. A recording is a `voice` item (`file`, `dur`, optional `text` transcript) whose audio lives in the same file store as photos and videos. Links can move a capsule but not add one.
 - **Pen (P), highlighter (H), eraser (E), text (T).** An S Pen's side button or a tablet pen's eraser end erases while held.
 - **Fingers:** once a pen has been used on the device, fingers move the page. A finger tap still counts: double-tap writes, and the text tool starts a note where you tap. "Draw with finger", next to the pen colours, switches that back.
 - **Desktop:** the wheel pans, Ctrl + wheel or a trackpad pinch zooms, and holding Space lets you drag. Ctrl+Z and Ctrl+Shift+Z undo and redo.
