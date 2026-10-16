@@ -1,5 +1,6 @@
 name = "sl8"
-main = "src/worker.js"
+main = "src/index.js"
+compatibility_flags = ["nodejs_compat"]
 compatibility_date = "2025-09-01"
 routes = [
   { pattern = "thinksl8.com", custom_domain = true },
@@ -10,7 +11,7 @@ routes = [
 directory = "./public"
 binding = "ASSETS"
 not_found_handling = "404-page"
-run_worker_first = ["/api/*"] # pages and files are served straight from assets; only the API runs code
+run_worker_first = ["/api/*", "/mcp", "/mcp/*", "/authorize", "/oauth/*", "/.well-known/*"] # pages and files are served straight from assets; only the API and the MCP connector run code
 
 [[d1_databases]]
 binding = "DB"
@@ -28,3 +29,7 @@ new_sqlite_classes = ["Room"] # SQLite-backed, the kind the Workers Free plan al
 [[kv_namespaces]]
 binding = "FILES" # uploaded canvas background images
 id = "f20ba06a87b646558d008b09b8ac096d"
+
+[[kv_namespaces]]
+binding = "OAUTH_KV" # the MCP connector: OAuth clients, grants and tokens
+id = "f2c04d060a5345f5b7508e59f67102db"
