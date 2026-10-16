@@ -3,7 +3,14 @@ name: Android APK
 on:
   workflow_dispatch:
   push:
-    paths: ['android/**', '.github/workflows/android-apk.yml']
+    branches: [main]
+    paths: ['android/app/**', 'android/*.gradle', 'android/gradle.properties', '.github/workflows/android-apk.yml']
+
+permissions:
+  contents: write # to publish android/assetlinks.json
+
+env:
+  KEY_DIR: ~/thinksl8-key
 
 jobs:
   build:
@@ -17,17 +24,47 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.7
-      - name: Build signed APK
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: thinksl8
-          KEY_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+
+      # A dev signing key, made on the first run and kept in the Actions cache so later builds are signed alike.
+      # ponytail: the cache can be evicted after 7 idle days (new key: uninstall the app, then install the new APK). Publishing to Google Play uses Play App Signing instead.
+      - uses: actions/cache@v4
+        with:
+          path: ~/thinksl8-key
+          key: thinksl8-key-v1
+      - name: Make the signing key if there isn't one
         run: |
-          echo "${{ secrets.KEYSTORE_B64 }}" | base64 -d > "$RUNNER_TEMP/release.jks"
-          export KEYSTORE_PATH="$RUNNER_TEMP/release.jks"
-          gradle -p android assembleRelease
-          echo "== Put this SHA-256 in assetlinks.json =="
-          keytool -list -v -keystore "$KEYSTORE_PATH" -storepass "$KEYSTORE_PASSWORD" | grep 'SHA256:'
+          D=$(eval echo $KEY_DIR)
+          if [ ! -f "$D/release.jks" ]; then
+            mkdir -p "$D"
+            openssl rand -hex 16 > "$D/pw"
+            keytool -genkeypair -keystore "$D/release.jks" -alias thinksl8 -keyalg RSA -keysize 2048 -validity 10000 \
+              -storepass "$(cat "$D/pw")" -keypass "$(cat "$D/pw")" -dname "CN=ThinkSL8"
+          fi
+          echo "::add-mask::$(cat "$D/pw")"
+          echo "KEYSTORE_PATH=$D/release.jks" >> "$GITHUB_ENV"
+          echo "KEYSTORE_PASSWORD=$(cat "$D/pw")" >> "$GITHUB_ENV"
+          echo "KEY_PASSWORD=$(cat "$D/pw")" >> "$GITHUB_ENV"
+          echo "KEY_ALIAS=thinksl8" >> "$GITHUB_ENV"
+
+      - name: Build signed APK
+        run: |
+          set -o pipefail
+          gradle -p android assembleRelease --console=plain 2>&1 | tee "$RUNNER_TEMP/build.log"
+      - name: Show the end of the build log as an annotation
+        if: failure()
+        run: echo "::error title=Build tail::$(tail -n 40 "$RUNNER_TEMP/build.log" | sed ':a;N;$!ba;s/\n/%0A/g')"
+
+      - name: Publish asset links
+        if: github.ref == 'refs/heads/main'
+        run: |
+          SHA=$(keytool -list -v -keystore "$KEYSTORE_PATH" -storepass "$KEYSTORE_PASSWORD" | grep -m1 'SHA256:' | sed 's/.*SHA256: *//')
+          echo "Signing SHA-256: $SHA" | tee -a "$GITHUB_STEP_SUMMARY"
+          printf '[{"relation":["delegate_permission/common.handle_all_urls"],"target":{"namespace":"android_app","package_name":"com.thinksl8.app","sha256_cert_fingerprints":["%s"]}}]\n' "$SHA" > android/assetlinks.json
+          git config user.name github-actions
+          git config user.email github-actions@users.noreply.github.com
+          git add android/assetlinks.json
+          git diff --cached --quiet || { git commit -m "Update Android asset links" && git push; }
+
       - uses: actions/upload-artifact@v4
         with:
           name: thinksl8-apk

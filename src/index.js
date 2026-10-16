@@ -2,16 +2,14 @@
 import OAuthProvider from '@cloudflare/workers-oauth-provider';
 import app, { Room } from './worker.js';
 import { McpApi, authorize } from './mcp.js';
+import assetlinks from '../android/assetlinks.json';
 
 export { Room };
 let provider;
-// Digital Asset Links so the Android app opens thinksl8.com fullscreen. Paste the SHA-256 printed by the "Android APK" workflow.
-const ANDROID_SHA256 = '';
 export default {
   fetch(req, env, ctx) {
-    if (ANDROID_SHA256 && new URL(req.url).pathname === '/.well-known/assetlinks.json') {
-      return Response.json([{ relation: ['delegate_permission/common.handle_all_urls'], target: { namespace: 'android_app', package_name: 'com.thinksl8.app', sha256_cert_fingerprints: [ANDROID_SHA256] } }]);
-    }
+    // Digital Asset Links so the Android app opens thinksl8.com fullscreen. The "Android APK" workflow keeps this file current.
+    if (assetlinks.length && new URL(req.url).pathname === '/.well-known/assetlinks.json') return Response.json(assetlinks);
     // The connector is bound to one address (tokens are issued for it). MCP_RESOURCE overrides it for local tests.
     provider ??= new OAuthProvider({
       apiRoute: '/mcp',

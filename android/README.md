@@ -2,22 +2,16 @@
 
 Thin Trusted Web Activity around https://thinksl8.com. Declares `CREATE_NOTE` so Android can offer it as the default notes app.
 
-## One-time setup (run in the repo root; needs `gh` logged in, plus `keytool` and `openssl`; Git Bash/WSL/Linux)
-
-```
-P=$(openssl rand -hex 16) && keytool -genkeypair -keystore thinksl8.jks -alias thinksl8 -keyalg RSA -keysize 2048 -validity 10000 -storepass $P -keypass $P -dname "CN=ThinkSL8" && base64 -w0 thinksl8.jks | gh secret set KEYSTORE_B64 && gh secret set KEYSTORE_PASSWORD --body "$P" && echo "Back up thinksl8.jks somewhere safe, password: $P"
-```
-
-Losing `thinksl8.jks` means you can never update the installed app. Don't commit it.
-
 ## Build
 
-Push, or run the "Android APK" workflow by hand (Actions tab). Download the `thinksl8-apk` artifact, copy the APK to the phone, install it. The log prints the signing SHA-256.
+The "Android APK" workflow runs on pushes to the app, or by hand (Actions tab → Run workflow). Nothing to set up: it makes a dev signing key on the first run and keeps it in the Actions cache. Download the `thinksl8-apk` artifact from the run, unzip, copy the APK to the phone, install it.
 
-## Make it fullscreen (no URL bar)
+The cache can be evicted after 7 idle days. Then the next build has a new key, and you must uninstall the old app before installing it.
 
-Paste the SHA-256 from the build log into `ANDROID_SHA256` in `src/index.js` and deploy. The Worker then serves `/.well-known/assetlinks.json`. Reinstall the app after.
+## Fullscreen (no URL bar)
+
+Automatic: the workflow commits `android/assetlinks.json` with the signing SHA-256, and the Worker serves it at `/.well-known/assetlinks.json` once Cloudflare deploys. Reinstall the app after that first deploy.
 
 ## Make it the notes app
 
-Phone: Settings → Apps → Choose default apps → Notes app → ThinkSL8 (the entry may be missing or ignored on Samsung; that is the thing to test). Then pull the pen with "When S Pen is removed" set to Create note.
+The site asks once, inside the app, after a pen has been used. Or by hand: Settings → Apps → Choose default apps → Notes app → ThinkSL8 (the entry may be missing or ignored on Samsung; that is the thing to test). Then pull the pen with "When S Pen is removed" set to Create note.
