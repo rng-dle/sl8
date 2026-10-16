@@ -896,6 +896,7 @@ async function api(req, env, ctx, url) {
   return fail(404, 'Not found.');
 }
 
+export { currentUser, saveOps, saved, sniffVideo, sniffAudio, fileKey, MAX_FILES, MAX_VIDEO };
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);

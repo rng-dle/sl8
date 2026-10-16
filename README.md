@@ -38,7 +38,7 @@ npx wrangler dev --port 8787 --local-upstream 127.0.0.1:8787
 Then, in another terminal:
 
 ```
-bash test/smoke-test.sh && node test/ai-test.mjs && node test/account-test.mjs && node test/share-test.mjs && node test/share-follow-test.mjs && node test/market-test.mjs && node test/voice-test.mjs && python3 test/pen-test.py && python3 test/journey.py && python3 test/share-journey.py && python3 test/voice-journey.py
+bash test/smoke-test.sh && node test/ai-test.mjs && node test/account-test.mjs && node test/share-test.mjs && node test/share-follow-test.mjs && node test/market-test.mjs && node test/voice-test.mjs && node test/mcp-test.mjs && python3 test/pen-test.py && python3 test/journey.py && python3 test/share-journey.py && python3 test/voice-journey.py
 ```
 
 - `smoke-test.sh`: accounts, saving, isolation between users, lockout (per account and network, so strangers can't lock you out), logout.
@@ -62,6 +62,14 @@ The Python tests need `pip install playwright && playwright install chromium`.
 - **Connecting:** "Continue with OpenRouter" is a real OAuth PKCE flow. OpenRouter returns a key owned by the user, billed to their OpenRouter account, with free models available. OpenAI, Anthropic and Gemini connect by API key under Settings → AI → Advanced. Keys are checked against the provider before saving, encrypted with AES-GCM and never sent to the browser.
 - **Asking:** the server gathers typed text from the scope the user allows (selection, current canvas, or all canvases) and sends it with the question. When a scope has too much text to send whole, it uses SQLite FTS5 keyword search plus the most recent edits. Answers stream back with numbered sources that link to the original notes. "Add to canvas" is the only way an answer reaches the canvas, and Undo removes it.
 - **Limits:** 200 AI requests per user per day. Handwriting isn't readable by the AI yet.
+
+## Connect your own AI (MCP)
+
+ThinkSL8 is a remote MCP server at `https://thinksl8.com/mcp` (OAuth 2.1, Streamable HTTP, stateless). In Claude, add a custom connector with that URL; sign in to ThinkSL8 in the same browser when asked, then approve. Approval is read-only unless you tick "Also allow adding voice notes and transcripts".
+
+Tools: `list_canvases`, `read_canvas`, `search` (typed notes and voice transcripts), `get_voice_note` (transcript and optionally the audio, up to 2 MB), and, with write access, `set_voice_transcript` and `add_voice_note`. Every query is scoped to the signed-in user's own canvases. Writes go through the same validation and live sync as the app.
+
+Built on Cloudflare's `@cloudflare/workers-oauth-provider` and `agents` (`createMcpHandler`). `src/index.js` wraps the app with the provider; `src/mcp.js` has the consent screen and the tools. It needs the KV binding `OAUTH_KV` (one namespace, created once). Tokens are issued for `https://thinksl8.com/mcp`, so the connector only works on that address (set `MCP_RESOURCE` to test elsewhere, and run `wrangler dev` with `--local-upstream`). Approving again for the same app replaces its earlier grant. Test: `node test/mcp-test.mjs`.
 
 ## Using it
 
