@@ -40,16 +40,16 @@
             </intent-filter>
         </activity>
 
-        <!-- The site's "Open ThinkSL8 when you pull out your pen?" prompt lands here (verified app link). -->
+        <!-- The site's "Open ThinkSL8 when you pull out your pen?" prompt lands here (thinksl8://pen-setup, via an intent: link). -->
         <activity
             android:name=".PenSetupActivity"
             android:exported="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar">
-            <intent-filter android:autoVerify="true">
+            <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="thinksl8.com" android:path="/app/pen-setup" />
+                <data android:scheme="thinksl8" android:host="pen-setup" />
             </intent-filter>
         </activity>
     </application>

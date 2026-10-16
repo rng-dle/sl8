@@ -151,8 +151,9 @@ function penAsk() {
     }
     return;
   }
-  if (!/Android/i.test(navigator.userAgent) || !store.get('sl8:app') || !store.get('sl8:pen') || store.get('sl8:penask')) return;
+  if (!/Android/i.test(navigator.userAgent) || !store.get('sl8:app') || !store.get('sl8:pen') || ['no', 'done'].includes(store.get('sl8:penask'))) return;
   const el = bar('<div><b>Open ThinkSL8 when you pull out your pen?</b><p>Android will ask you to confirm once. You can change it any time in Android settings.</p></div><div class="row"><button class="btn quiet" id="pen-no">Not now</button><button class="btn primary" id="pen-yes">Set it up</button></div>');
   el.querySelector('#pen-no').onclick = () => { store.set('sl8:penask', 'no'); el.remove(); };
-  el.querySelector('#pen-yes').onclick = () => { store.set('sl8:penask', 'asked'); go('/app/pen-setup'); };
+  // An intent: link launches the app's own screen; a normal link to our own site would just stay in the app's browser window.
+  el.querySelector('#pen-yes').onclick = () => go('intent://pen-setup#Intent;scheme=thinksl8;package=com.thinksl8.app;S.browser_fallback_url=' + encodeURIComponent(location.origin + '/app/pen-setup') + ';end');
 }
