@@ -127,8 +127,9 @@ async function botCheck(el) {
 }
 
 // Android app + pen: inside the Android app, on a device where a pen has been used, ask once whether pulling the pen out
-// should open ThinkSL8. "Set it up" hands off to the app (/app/pen-setup), which shows Android's one-tap notes-app prompt.
-// The answer is kept per device in sl8:penask. (Samsung's own "When S Pen is removed" switch can't be changed by an app.)
+// should open ThinkSL8. "Set it up" hands off to the app (thinksl8://pen-setup), which asks for its two permissions and starts
+// a background listener for the pen coming out. The answer is kept per device in sl8:penask. (Samsung's own "When S Pen is
+// removed" setting can't be changed by an app, so the confirmation card tells the user to set it to Do nothing.)
 if (new URLSearchParams(location.search).get('src') === 'app' || document.referrer.startsWith('android-app://com.thinksl8.app')) store.set('sl8:app', 1);
 addEventListener('pointerdown', (e) => { if (e.pointerType === 'pen') store.set('sl8:pen', 1); }, { capture: true, passive: true });
 function penAsk() {
@@ -142,17 +143,17 @@ function penAsk() {
   if (result) {
     q.delete('pen');
     history.replaceState(null, '', location.pathname + (q.size ? '?' + q : '') + location.hash);
-    if (result === 'held') {
-      bar('<div><b>ThinkSL8 is your notes app</b><p>One switch is left, and only Samsung can flip it: Settings → Advanced features → S Pen → When S Pen is removed → Create note.</p></div><div class="row"><button class="btn primary" id="pen-ok">Got it</button></div>')
+    if (result === 'on') {
+      bar('<div><b>Pen shortcut is on</b><p>One setting is left, and only Samsung can change it: Settings → Advanced features → S Pen → When S Pen is removed → Do nothing, so Samsung Notes stays closed. A small notification shows while this is on, with a Turn off button.</p></div><div class="row"><button class="btn primary" id="pen-ok">Got it</button></div>')
         .querySelector('#pen-ok').onclick = () => { store.set('sl8:penask', 'done'); document.getElementById('pen-ask').remove(); };
     } else {
       store.set('sl8:penask', 'no');
-      toast(result === 'declined' ? 'No change made. ThinkSL8 is not your notes app.' : "This version of Android doesn't let an app become the notes app. You can still add ThinkSL8 to your pen's Air command menu.");
+      toast('Not turned on. ThinkSL8 needs "Display over other apps" to open when the pen comes out.');
     }
     return;
   }
   if (!/Android/i.test(navigator.userAgent) || !store.get('sl8:app') || !store.get('sl8:pen') || ['no', 'done'].includes(store.get('sl8:penask'))) return;
-  const el = bar('<div><b>Open ThinkSL8 when you pull out your pen?</b><p>Android will ask you to confirm once. You can change it any time in Android settings.</p></div><div class="row"><button class="btn quiet" id="pen-no">Not now</button><button class="btn primary" id="pen-yes">Set it up</button></div>');
+  const el = bar('<div><b>Open ThinkSL8 when you pull out your pen?</b><p>Android will ask for two permissions: notifications, and "Display over other apps". You can turn it off any time from the notification.</p></div><div class="row"><button class="btn quiet" id="pen-no">Not now</button><button class="btn primary" id="pen-yes">Set it up</button></div>');
   el.querySelector('#pen-no').onclick = () => { store.set('sl8:penask', 'no'); el.remove(); };
   // An intent: link launches the app's own screen; a normal link to our own site would just stay in the app's browser window.
   el.querySelector('#pen-yes').onclick = () => go('intent://pen-setup#Intent;scheme=thinksl8;package=com.thinksl8.app;S.browser_fallback_url=' + encodeURIComponent(location.origin + '/app/pen-setup') + ';end');
