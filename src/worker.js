@@ -148,6 +148,11 @@ function validItem(it) {
   if (it.kind === 'image' || it.kind === 'video') { // a photo or video placed on the canvas, from /api/files
     return FILE_ID.test(it.file) && [it.x, it.y, it.w, it.h].every(Number.isFinite) && it.w > 0 && it.h > 0;
   }
+  if (it.kind === 'voice') { // a voice recording from /api/files, with an optional transcript the user's AI can read or write
+    return FILE_ID.test(it.file) && [it.x, it.y, it.w, it.h].every(Number.isFinite) && it.w > 0 && it.h > 0
+      && (it.dur === undefined || (Number.isFinite(it.dur) && it.dur >= 0 && it.dur < 7200))
+      && (it.text === undefined || (typeof it.text === 'string' && it.text.length <= 40000));
+  }
   return false;
 }
 
@@ -281,11 +286,19 @@ const sniffVideo = (b) => {
   return null;
 };
 // ponytail: files live in KV (25 MiB per value, 1 GB on the free plan); move to R2 for longer videos and more room
+// Recordings from MediaRecorder are WebM (Chrome, Android), MP4 (Safari) or Ogg (Firefox): the first two already pass sniffVideo.
+const sniffAudio = (b) => {
+  const s = (a, z) => String.fromCharCode(...b.slice(a, z));
+  if (s(0, 4) === 'OggS') return 'audio/ogg';
+  if (s(0, 3) === 'ID3' || (b[0] === 0xff && (b[1] & 0xe0) === 0xe0)) return 'audio/mpeg';
+  if (s(0, 4) === 'RIFF' && s(8, 12) === 'WAVE') return 'audio/wav';
+  return null;
+};
 const MAX_IMAGE = 3 * 1024 * 1024, MAX_VIDEO = 25_000_000, MAX_FILES = 100, MAX_USER_BYTES = 200_000_000;
 // Files no canvas uses any more (deleted photos, replaced backgrounds), for clearing room when someone hits a limit.
 async function unusedFiles(env, userId, keys) {
   const [items, styles] = await env.DB.batch([
-    env.DB.prepare("SELECT i.data FROM items i JOIN notes n ON n.id = i.note_id WHERE n.user_id = ? AND (i.data LIKE '%\"kind\":\"image\"%' OR i.data LIKE '%\"kind\":\"video\"%')").bind(userId),
+    env.DB.prepare("SELECT i.data FROM items i JOIN notes n ON n.id = i.note_id WHERE n.user_id = ? AND (i.data LIKE '%\"kind\":\"image\"%' OR i.data LIKE '%\"kind\":\"video\"%' OR i.data LIKE '%\"kind\":\"voice\"%')").bind(userId),
     env.DB.prepare('SELECT s.style FROM canvas_style s JOIN notes n ON n.id = s.note_id WHERE n.user_id = ?').bind(userId),
   ]);
   const used = new Set([...items.results.map((r) => JSON.parse(r.data).file), ...styles.results.map((r) => JSON.parse(r.style).image)]);
@@ -406,7 +419,7 @@ async function saveOps(env, noteId, list, share) {
     puts = puts.filter(([it]) => {
       const p = prev.get(it.id);
       // links can't add photos, videos or portals (those point at the owner's files and canvases), only move them
-      const fixed = !['image', 'video', 'portal'].includes(it.kind) || (p?.kind === it.kind && p.file === it.file && p.target === it.target);
+      const fixed = !['image', 'video', 'voice', 'portal'].includes(it.kind) || (p?.kind === it.kind && p.file === it.file && p.target === it.target);
       if (ok(it) && was(p) && fixed) return true;
       rejected.push(it.id);
       return false;
@@ -690,8 +703,8 @@ async function api(req, env, ctx, url) {
 
   if (path === '/api/files' && method === 'POST') {
     const bytes = new Uint8Array(await req.arrayBuffer());
-    const image = sniffImage(bytes), type = image || sniffVideo(bytes);
-    if (!type) return fail(415, 'Use a photo (JPEG, PNG, WebP or GIF) or a video (MP4, MOV or WebM).');
+    const image = sniffImage(bytes), type = image || sniffVideo(bytes) || sniffAudio(bytes);
+    if (!type) return fail(415, 'Use a photo (JPEG, PNG, WebP or GIF), a video (MP4, MOV or WebM) or a voice recording.');
     if (image && bytes.length > MAX_IMAGE) return fail(413, 'That image is over 3 MB. Try a smaller one.');
     if (!image && bytes.length > MAX_VIDEO) return fail(413, 'Videos can be up to 25 MB for now, about 20 to 30 seconds from a phone.');
     let { keys } = await env.FILES.list({ prefix: `img:${user.id}:` }); // one page holds 1000, well over the limit

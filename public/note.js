@@ -527,13 +527,13 @@ function apply(id, item, save = true) {
   if (item) items.set(id, item); else { items.delete(id); selection.delete(id); }
   sorted = null;
   if (item) renderDom(item);
-  else if (textEls.has(id)) { ctrls.get(id)?.destroy?.(); ctrls.delete(id); textEls.get(id).remove(); textEls.delete(id); }
+  else if (textEls.has(id)) { textEls.get(id)._audio?.pause(); ctrls.get(id)?.destroy?.(); ctrls.delete(id); textEls.get(id).remove(); textEls.delete(id); }
   if (save) queue(id, item);
   // arrows hang off other items, so anything but a plain new stroke can move them
   if (item?.kind !== 'stroke' && (connCount || item?.kind === 'conn' || prev?.kind === 'conn' || isMedia(item) || isMedia(prev))) schedule(true);
   updateHint();
 }
-const renderDom = (it) => (it.kind === 'text' ? renderText(it) : it.kind === 'portal' ? renderPortal(it) : it.kind === 'embed' ? renderEmbed(it) : null);
+const renderDom = (it) => (it.kind === 'text' ? renderText(it) : it.kind === 'portal' ? renderPortal(it) : it.kind === 'embed' ? renderEmbed(it) : it.kind === 'voice' ? renderVoice(it) : null);
 // arrows attached to any of these items
 const connsOf = (ids) => [...items.values()].filter((it) => it.kind === 'conn' && (ids.has(it.a) || ids.has(it.b)));
 function commit(changes) {
@@ -1045,7 +1045,7 @@ function addPortal(target) {
 /* ---------- selection ---------- */
 function itemRect(it) {
   if (it.kind === 'stroke') return bbox(it);
-  if (it.kind === 'portal' || it.kind === 'embed' || isMedia(it)) return { x0: it.x, y0: it.y, x1: it.x + it.w, y1: it.y + it.h };
+  if (it.kind === 'portal' || it.kind === 'embed' || it.kind === 'voice' || isMedia(it)) return { x0: it.x, y0: it.y, x1: it.x + it.w, y1: it.y + it.h };
   if (it.kind === 'conn') {
     const e = connEnds(it);
     return e && { x0: Math.min(e[0][0], e[1][0]), y0: Math.min(e[0][1], e[1][1]), x1: Math.max(e[0][0], e[1][0]), y1: Math.max(e[0][1], e[1][1]) };
@@ -1083,7 +1083,7 @@ function hitItem(x, y) {
   if (!sorted) sorted = [...items.values()].sort((a, b) => a.t - b.t);
   for (let i = sorted.length - 1; i >= 0; i--) { // text and portals sit above everything drawn
     const it = sorted[i];
-    if (it.kind !== 'text' && it.kind !== 'portal' && it.kind !== 'embed') continue;
+    if (it.kind !== 'text' && it.kind !== 'portal' && it.kind !== 'embed' && it.kind !== 'voice') continue;
     const b = itemRect(it);
     if (x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) return it;
   }
@@ -1466,6 +1466,7 @@ function doubleTap(e, tap, wasEditing) {
   if (hit?.kind === 'text') editText(hit.id);
   else if (hit?.kind === 'portal') openPortal(hit.id);
   else if (hit?.kind === 'embed') textEls.get(hit.id)?.classList.toggle('live');
+  else if (hit?.kind === 'voice') textEls.get(hit.id)?._toggle?.();
   else if (hit?.kind === 'conn') editLabel(hit.id);
   else if (hit?.kind === 'video') toggleVideo(hit);
   else if (!wasEditing) { setSelection([]); newText(x, y); }
@@ -2059,6 +2060,71 @@ $('#c-image').onchange = async (e) => {
     toast(err.message || "Couldn't use that image.");
   }
 };
+
+/* ---------- voice: record on the canvas, play back from a capsule. `text` holds a transcript (the user's AI can read or write it) ---------- */
+let voicePlaying = null, rec = null;
+const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+function renderVoice(it) {
+  let el = textEls.get(it.id);
+  if (!el) {
+    el = document.createElement('div');
+    el.className = 'voice';
+    el.innerHTML = '<button type="button" class="voice-play" aria-label="Play recording"></button><div class="voice-bar"><i></i></div><span class="voice-time"></span>';
+    const a = el._audio = new Audio();
+    a.preload = 'none';
+    a.src = fileUrl(it.file);
+    const bar = el.querySelector('i'), time = el.querySelector('.voice-time'), btn = el.querySelector('button');
+    const paint = () => { const d = a.duration || it.dur || 0; bar.style.width = d ? `${Math.min(100, (a.currentTime / d) * 100)}%` : '0'; time.textContent = clock(a.paused && !a.currentTime ? d : a.currentTime); };
+    a.ontimeupdate = paint;
+    a.onended = () => { a.currentTime = 0; el.classList.remove('playing'); paint(); };
+    a.onpause = () => el.classList.remove('playing');
+    a.onplay = () => { if (voicePlaying && voicePlaying !== a) voicePlaying.pause(); voicePlaying = a; el.classList.add('playing'); };
+    a.onerror = () => toast("That recording can't be played.");
+    el._toggle = () => { if (a.paused) a.play().catch(() => toast("That recording can't be played.")); else a.pause(); };
+    btn.addEventListener('click', (e) => { e.stopPropagation(); el._toggle(); });
+    el._paint = paint;
+    textsEl.append(el);
+    textEls.set(it.id, el);
+    el.classList.toggle('selected', selection.has(it.id));
+  }
+  Object.assign(el.style, { left: it.x + 'px', top: it.y + 'px', width: it.w + 'px', height: it.h + 'px' });
+  el.title = it.text || '';
+  el._paint();
+}
+async function recordVoice() {
+  if (shareToken) return toast("Recordings can't be added through a link.");
+  if (rec) return rec.stop();
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) return toast("This browser can't record audio.");
+  let stream;
+  try { stream = await navigator.mediaDevices.getUserMedia({ audio: true }); } catch { return toast('Allow the microphone to record.'); }
+  const type = ['audio/webm;codecs=opus', 'audio/mp4', 'audio/ogg;codecs=opus'].find((t) => MediaRecorder.isTypeSupported(t)) || '';
+  const mr = new MediaRecorder(stream, type ? { mimeType: type } : undefined), chunks = [], t0 = Date.now(), btn = $('#voice-add');
+  const [cx, cy] = toWorld(board.clientWidth / 2, board.clientHeight / 2);
+  const tick = setInterval(() => { const s = (Date.now() - t0) / 1000; btn.title = `Recording ${clock(s)}. Tap to stop.`; if (s >= 600) mr.stop(); }, 500); // ten minutes at most
+  mr.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  mr.onstop = async () => {
+    clearInterval(tick); stream.getTracks().forEach((t) => t.stop()); rec = null;
+    btn.classList.remove('recording'); btn.title = 'Record a voice note';
+    const blob = new Blob(chunks, { type: mr.mimeType || type || 'audio/webm' }), dur = Math.round((Date.now() - t0) / 100) / 10;
+    if (!blob.size) return;
+    toast('Saving recording…');
+    try {
+      const res = await fetch('/api/files', { method: 'POST', headers: { 'content-type': blob.type }, body: blob });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || 'Upload failed.');
+      const w = 260 / cam.z, h = 52 / cam.z;
+      const it = { id: crypto.randomUUID(), kind: 'voice', t: Date.now(), file: j.id, x: Math.round(cx - w / 2), y: Math.round(cy - h / 2), w: Math.round(w), h: Math.round(h), dur };
+      commit([{ id: it.id, before: null, after: it }]);
+      $('#toast').hidden = true;
+      setSelection([it.id]);
+    } catch (err) { toast(err.message || "Couldn't save the recording."); }
+  };
+  rec = mr;
+  mr.start();
+  btn.classList.add('recording');
+  toast('Recording… tap the mic again to stop.');
+}
+$('#voice-add').onclick = recordVoice;
 
 /* ---------- embeds: players and documents from other services on the canvas (list in /embeds.js); music is controlled from the ring ---------- */
 let EMBEDS, parseEmbed;

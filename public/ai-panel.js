@@ -18,8 +18,8 @@ function el(tag, attrs = {}, ...kids) {
   n.append(...kids.filter((k) => k != null));
   return n;
 }
-const here = () => '/note?id=' + encodeURIComponent(noteId);
-const orStart = () => '/api/ai/openrouter/start?return=' + encodeURIComponent(here());
+const aiReturn = () => '/note?id=' + encodeURIComponent(noteId);
+const orStart = () => '/api/ai/openrouter/start?return=' + encodeURIComponent(aiReturn());
 
 async function loadAIState() {
   try { aiState = await api('/api/ai'); } catch (e) { aiState = { error: e.message }; }
