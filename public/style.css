@@ -163,4 +163,13 @@ a { color: var(--accent); }
   background: var(--text); color: var(--paper); border-radius: var(--radius);
   font-size: 15px; box-shadow: var(--shadow); z-index: 50;
 }
+.pen-ask {
+  position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom, 0px) + 16px); transform: translateX(-50%);
+  width: min(460px, calc(100% - 32px)); padding: 16px; display: grid; gap: 12px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: var(--shadow); z-index: 40;
+}
+.pen-ask b { display: block; font: 400 20px/1.2 var(--font-display); margin-bottom: 4px; }
+.pen-ask p { margin: 0; font-size: 15px; color: var(--muted); }
+.pen-ask .row { display: flex; gap: 8px; justify-content: flex-end; }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }

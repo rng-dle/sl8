@@ -64,6 +64,7 @@
 <script>
 const $ = (s) => document.querySelector(s);
 try { sessionStorage.removeItem('sl8:trail'); } catch {} // portals' way back starts fresh from here
+penAsk();
 const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' });
 function ago(ms) {
   const s = (ms - Date.now()) / 1000;

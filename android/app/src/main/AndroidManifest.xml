@@ -19,7 +19,7 @@
 
             <meta-data
                 android:name="android.support.customtabs.trusted.DEFAULT_URL"
-                android:value="https://thinksl8.com/" />
+                android:value="https://thinksl8.com/?src=app" />
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -37,6 +37,19 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" android:host="thinksl8.com" />
+            </intent-filter>
+        </activity>
+
+        <!-- The site's "Open ThinkSL8 when you pull out your pen?" prompt lands here (verified app link). -->
+        <activity
+            android:name=".PenSetupActivity"
+            android:exported="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="thinksl8.com" android:path="/app/pen-setup" />
             </intent-filter>
         </activity>
     </application>
