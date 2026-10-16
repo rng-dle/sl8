@@ -8,6 +8,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
+import android.widget.Toast;
 
 /**
  * Opened by thinksl8://pen-setup (from the site's pen prompt): asks for the two permissions the pen shortcut needs,
@@ -38,8 +39,13 @@ public class PenSetupActivity extends Activity {
     private void done() {
         boolean on = Settings.canDrawOverlays(this);
         if (on) {
-            getSharedPreferences("pen", MODE_PRIVATE).edit().putBoolean("on", true).apply();
-            startForegroundService(new Intent(this, PenWatchService.class));
+            try {
+                getSharedPreferences("pen", MODE_PRIVATE).edit().putBoolean("on", true).apply();
+                startForegroundService(new Intent(this, PenWatchService.class));
+            } catch (Exception e) {
+                on = false;
+                Toast.makeText(this, "Pen shortcut failed: " + e, Toast.LENGTH_LONG).show(); // so a crash is visible, not silent
+            }
         }
         startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://thinksl8.com/canvases?pen=" + (on ? "on" : "declined"))).setPackage(getPackageName()));
         finish();

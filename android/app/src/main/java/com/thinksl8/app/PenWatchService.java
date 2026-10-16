@@ -11,6 +11,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.pm.ServiceInfo;
 import android.graphics.PixelFormat;
+import android.graphics.drawable.Icon;
 import android.os.Build;
 import android.os.IBinder;
 import android.provider.Settings;
@@ -88,7 +89,7 @@ public class PenWatchService extends Service {
                 .setContentTitle("ThinkSL8 pen shortcut is on")
                 .setContentText(text)
                 .setOngoing(true)
-                .addAction(new Notification.Action.Builder(null, "Turn off", off).build())
+                .addAction(new Notification.Action.Builder(Icon.createWithResource(this, android.R.drawable.ic_menu_close_clear_cancel), "Turn off", off).build())
                 .build();
     }
 }
