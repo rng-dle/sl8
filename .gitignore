@@ -2,3 +2,9 @@ node_modules/
 .wrangler/
 .dev.vars
 __pycache__/
+
+# Android wrapper
+android/.gradle/
+android/app/build/
+android/build/
+*.jks
