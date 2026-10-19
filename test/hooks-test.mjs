@@ -65,11 +65,11 @@ p = await alice.form({ action: 'add', note_id: bridge.id, kind: 'routine', url: 
 ok(/looks wrong/.test(p.html), 'a routine URL that is not a routine trigger is refused');
 p = await bob.form({ action: 'add', note_id: bridge.id, kind: 'routine', url: fireUrl, token: routineToken, cooldown: '2' });
 ok(/Pick one of your canvases/.test(p.html), "you can't put an alert on someone else's canvas");
-p = await alice.form({ action: 'add', note_id: bridge.id, kind: 'routine', label: 'Wake claude-ai', url: fireUrl, token: routineToken, match: 'TO: claude-ai', cooldown: '2' });
+p = await alice.form({ action: 'add', note_id: bridge.id, kind: 'routine', label: 'Wake claude-ai', url: fireUrl, token: routineToken, match: 'TO: claude-ai', cooldown: '4' });
 ok(/Alert added/.test(p.html) && /Wake claude-ai/.test(p.html), 'alice adds a routine alert', p.html.slice(0, 300));
 ok(!p.html.includes(routineToken), 'the routine token is never shown back');
 const bobPage = await (await fetch(B + '/alerts', { headers: { cookie: bob.cookie() } })).text();
-ok(!bobPage.includes('Wake claude-ai'), "bob doesn't see alice's alerts");
+ok(!bobPage.includes('<b>Wake claude-ai</b>') && /No alerts yet/.test(bobPage), "bob doesn't see alice's alerts");
 
 // fires
 await call(token, 'add_note', { canvas_id: bridge.id, text: '## [ID 0001] FROM: org-claude | TO: claude-ai | STATUS: open\nPlease check the leads file.' });
@@ -89,11 +89,11 @@ await sleep(600);
 ok((await fires()).length === 1, 'inside the cooldown the next match waits');
 let page = await (await fetch(B + '/alerts', { headers: { cookie: alice.cookie() } })).text();
 ok(/one waiting/.test(page) && /woke the routine/.test(page), 'the page shows the last result and the waiting alert');
-await sleep(2200);
-await fetch(B + '/__scheduled?cron=' + encodeURIComponent('*/5 * * * *'));
+await sleep(4200);
+await fetch(B + '/api/__test/alerts-cron');
 f = await waitFires(2);
 ok(f.length === 2 && f[1].body.text.includes('[ID 0003]'), 'the scheduled run sends what waited out the cooldown', JSON.stringify(f.map((x) => x.body.text)));
-await fetch(B + '/__scheduled?cron=' + encodeURIComponent('*/5 * * * *'));
+await fetch(B + '/api/__test/alerts-cron');
 await sleep(500);
 ok((await fires()).length === 2, 'and does not send it twice');
 
@@ -103,7 +103,7 @@ ok(/Test: woke the routine/.test(p.html) && (await waitFires(3)).length === 3, '
 p = await bob.form({ action: 'test', id: hookId });
 ok(/No such alert/.test(p.html), "bob can't fire alice's alert");
 p = await bob.form({ action: 'delete', id: hookId });
-await sleep(2200);
+await sleep(4200);
 await call(token, 'add_note', { canvas_id: bridge.id, text: 'TO: claude-ai still there?' });
 ok((await waitFires(4)).length === 4, "bob can't remove alice's alert");
 

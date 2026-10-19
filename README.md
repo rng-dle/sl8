@@ -32,7 +32,7 @@ Mail goes out from `no-reply@thinksl8.com` (override with a `MAIL_FROM` variable
 printf 'KEY_ENC_SECRET="local-dev-only-secret-0123456789abcdef"\nTEST_BASE="http://127.0.0.1:8788"\nRESEND_API_KEY="test-resend-key"\nMCP_RESOURCE="http://127.0.0.1:8787/mcp"\n' > .dev.vars
 npx wrangler d1 migrations apply sl8-db --local
 node test/fake-provider.mjs &
-npx wrangler dev --port 8787 --local-upstream 127.0.0.1:8787 --test-scheduled
+npx wrangler dev --port 8787 --local-upstream 127.0.0.1:8787
 ```
 
 Then, in another terminal:
@@ -73,7 +73,7 @@ Built on Cloudflare's `@cloudflare/workers-oauth-provider` and `agents` (`create
 
 ### Alerts (/alerts)
 
-When a connected AI adds or changes something on a canvas, ThinkSL8 can wake a Claude routine through its API trigger (paste the routine's fire URL and token; the token is sealed with `KEY_ENC_SECRET`) or email the owner (needs mail set up). Each alert can be limited to text containing given words (for example `TO: claude-ai`) and has a cooldown; writes inside the cooldown are sent by the next write or by the scheduled handler (`[triggers]` in `wrangler.toml`, every 5 minutes). The owner's own edits never trigger alerts. Code in `src/hooks.js`, table in `migrations/0009_canvas_hooks.sql`. Test: `node test/hooks-test.mjs` (needs `wrangler dev --test-scheduled`).
+When a connected AI adds or changes something on a canvas, ThinkSL8 can wake a Claude routine through its API trigger (paste the routine's fire URL and token; the token is sealed with `KEY_ENC_SECRET`) or email the owner (needs mail set up). Each alert can be limited to text containing given words (for example `TO: claude-ai`) and has a cooldown; writes inside the cooldown are sent by the next write or by the scheduled handler (`[triggers]` in `wrangler.toml`, every 5 minutes). The owner's own edits never trigger alerts. Code in `src/hooks.js`, table in `migrations/0009_canvas_hooks.sql`. Test: `node test/hooks-test.mjs` (it runs the catch-up through `/api/__test/alerts-cron`, which only exists when `TEST_BASE` is set).
 
 ## Using it
 

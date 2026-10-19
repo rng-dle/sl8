@@ -29,7 +29,7 @@ jobs:
       - name: Start the fake provider and the server
         run: |
           node test/fake-provider.mjs > "$RUNNER_TEMP/fake.log" 2>&1 &
-          npx wrangler dev --port 8787 --local-upstream 127.0.0.1:8787 --test-scheduled > "$RUNNER_TEMP/wrangler.log" 2>&1 &
+          npx wrangler dev --port 8787 --local-upstream 127.0.0.1:8787 > "$RUNNER_TEMP/wrangler.log" 2>&1 &
           for i in $(seq 1 90); do curl -s -o /dev/null http://127.0.0.1:8787/ && exit 0; sleep 1; done
           echo "server did not start"; tail -n 60 "$RUNNER_TEMP/wrangler.log"; exit 1
       - name: Smoke test

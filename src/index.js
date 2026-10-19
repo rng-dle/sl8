@@ -11,6 +11,8 @@ export default {
   fetch(req, env, ctx) {
     // Digital Asset Links so the Android app opens thinksl8.com fullscreen. The "Android APK" workflow keeps this file current.
     if (assetlinks.length && new URL(req.url).pathname === '/.well-known/assetlinks.json') return Response.json(assetlinks);
+    // Local tests only (TEST_BASE is never set in production): run the scheduled alerts catch-up on demand.
+    if (env.TEST_BASE && new URL(req.url).pathname === '/api/__test/alerts-cron') return firePending(env).then(() => Response.json({ ok: true }));
     // The connector is bound to one address (tokens are issued for it). MCP_RESOURCE overrides it for local tests.
     provider ??= new OAuthProvider({
       apiRoute: '/mcp',
