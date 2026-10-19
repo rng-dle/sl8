@@ -96,7 +96,11 @@ async function listModels(env, p, key) {
   return models.sort((a, b) => b.created - a.created);
 }
 
+// The default chat model is Claude Sonnet 5.5 wherever the provider offers it; other providers keep their own default.
+const SONNET = { anthropic: /^claude-sonnet-5[.-]5/i, openrouter: /^anthropic\/claude-sonnet-5[.-]5/i };
 function defaultModel(p, models, freeOnly) {
+  const sonnet = !freeOnly && SONNET[p] && models.find((m) => SONNET[p].test(m.id));
+  if (sonnet) return sonnet.id;
   if (p === 'openrouter') {
     if (!freeOnly) return 'openrouter/auto';
     const free = models.filter((m) => m.free);

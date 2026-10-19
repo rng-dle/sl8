@@ -36,6 +36,8 @@ jobs:
         run: set -o pipefail; bash test/smoke-test.sh 2>&1 | tee -a "$RUNNER_TEMP/tests.log"
       - name: MCP connector test
         run: set -o pipefail; node test/mcp-test.mjs 2>&1 | tee -a "$RUNNER_TEMP/tests.log"
+      - name: Bridge test
+        run: set -o pipefail; node --experimental-sqlite test/bridge-test.mjs 2>&1 | tee -a "$RUNNER_TEMP/tests.log"
       - name: Canvas alerts test
         run: set -o pipefail; node test/hooks-test.mjs 2>&1 | tee -a "$RUNNER_TEMP/tests.log"
       - name: Account, sharing, marketplace and voice tests

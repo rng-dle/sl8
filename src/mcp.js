@@ -6,6 +6,7 @@ import { createMcpHandler } from 'agents/mcp/server';
 import { z } from 'zod';
 import { currentUser, saveOps, saved, sniffVideo, sniffAudio, fileKey, MAX_FILES } from './worker.js';
 import { onAiWrite } from './hooks.js';
+import { registerBridge, cleanHandle } from './bridge.js';
 
 const MAX_AUDIO = 2_000_000; // decoded bytes an AI may add or fetch in one call
 const out = (o) => ({ content: [{ type: 'text', text: typeof o === 'string' ? o : JSON.stringify(o) }] });
@@ -14,7 +15,7 @@ const b64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s 
 const owns = (env, userId, noteId) => env.DB.prepare('SELECT title FROM notes WHERE id = ? AND user_id = ?').bind(noteId, userId).first();
 const NEED_WRITE = 'This connection is read-only. Reconnect ThinkSL8 and tick "allow adding recordings and transcripts" to use this tool.';
 
-function buildServer(env, ctx, { userId, scopes = [] }) {
+function buildServer(env, ctx, { userId, scopes = [], agent }) {
   const canWrite = scopes.includes('canvas:write');
   const s = new McpServer({ name: 'thinksl8', version: '1.0.0' });
   const save = async (noteId, ops) => (await saved(ctx, env, noteId, {}, saveOps(env, noteId, ops), ops)).ok;
@@ -174,6 +175,7 @@ function buildServer(env, ctx, { userId, scopes = [] }) {
     const res = await env.DB.prepare('UPDATE notes SET title = ?, updated_at = ? WHERE id = ? AND user_id = ?').bind(clean, Date.now(), canvas_id, userId).run();
     return res.meta?.changes ? out({ id: canvas_id, title: clean }) : err('No such canvas.');
   });
+  registerBridge(s, env, { userId, scopes, agent });
   return s;
 }
 
@@ -203,6 +205,7 @@ export async function authorize(req, env) {
     return page(`<h1>Connect ${esc(client?.clientName || 'an app')} to ThinkSL8?</h1><p>Signed in as ${esc(user.email)}. This lets the app read your canvases, typed notes and voice notes (with transcripts). It never sees your password and you can stop it by deleting the connection in the app.</p>
 <form method="post" action="/authorize"><input type="hidden" name="q" value="${esc(url.search)}">
 <label><input type="checkbox" name="write" value="1"> Also allow creating canvases and adding typed notes, portals, voice notes and transcripts</label>
+<label>Name this AI so your other AIs can message it: <input name="agent" value="${esc(cleanHandle(client?.clientName))}" maxlength="24" pattern="[a-z][a-z0-9_-]{1,23}" placeholder="jet" style="font:inherit;padding:.3rem .5rem;width:9rem"> (lowercase letters, digits, - or _; only needed for the AI-to-AI bridge)</label>
 <label><input type="checkbox" name="edit" value="1"> Also allow editing, moving, renaming and deleting what is already there</label>
 <button class="go" name="decision" value="allow">Allow</button> <button name="decision" value="deny">Cancel</button></form>`);
   }
@@ -213,6 +216,6 @@ export async function authorize(req, env) {
     return Response.redirect(back.toString(), 302);
   }
   const scopes = ['canvas:read', ...(form.get('write') ? ['canvas:write'] : []), ...(form.get('edit') ? ['canvas:edit'] : [])];
-  const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({ request: oauth, userId: user.id, metadata: { client: client?.clientName || '' }, scope: scopes, props: { userId: user.id, scopes } });
+  const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({ request: oauth, userId: user.id, metadata: { client: client?.clientName || '' }, scope: scopes, props: { userId: user.id, scopes, agent: cleanHandle(form.get('agent')) } });
   return Response.redirect(redirectTo, 302);
 }

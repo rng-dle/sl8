@@ -1,0 +1,61 @@
+// The bridge (src/bridge.js) against Node's built-in SQLite: delivery once, backoff hints, stand-down, loop guards, isolation.
+// Needs no server: `node --experimental-sqlite test/bridge-test.mjs`. Exits non-zero on failure.
+import { DatabaseSync } from 'node:sqlite';
+import fs from 'node:fs';
+import { registerBridge, cleanHandle, nextCheck } from '../src/bridge.js';
+let failed = 0;
+const ok = (c, n, x='') => { console.log(`${c ? 'ok  ' : 'FAIL'} - ${n}${!c && x ? '\n   ' + x : ''}`); if (!c) failed++; };
+const db = new DatabaseSync(':memory:');
+db.exec(fs.readFileSync(new URL('../migrations/0010_bridge.sql', import.meta.url), 'utf8'));
+const stmt = (sql) => { const q = db.prepare(sql); let args = [];
+  const o = { bind: (...a) => { args = a; return o; }, run: async () => { const r = q.run(...args); return { meta: { changes: r.changes } }; },
+    first: async (col) => { const r = q.get(...args); return col ? r?.[col] : r; }, all: async () => ({ results: q.all(...args) }) };
+  return o; };
+const env = { DB: { prepare: stmt } };
+const tools = {};
+const server = (agent) => { const t = {}; registerBridge({ registerTool: (n, d, f) => (t[n] = f) }, env, { userId: 'u1', scopes: ['canvas:read', 'canvas:write'], agent }); return t; };
+const parse = (r) => JSON.parse(r.content[0].text);
+const jet = server('jet'), max = server('max');
+
+ok(cleanHandle('Jet') === 'jet' && cleanHandle('!!') === '' && cleanHandle('a') === '', 'handles are lowercased and validated');
+ok(nextCheck({ unread: 0, openForMe: 0, openForThem: 0, idleMs: 0 }).stand_down === true, 'no open work -> stand down');
+ok(nextCheck({ unread: 0, openForMe: 0, openForThem: 1, idleMs: 5 * 60e3 }).next_check_minutes === 3 && nextCheck({ unread: 0, openForMe: 0, openForThem: 1, idleMs: 9 * 3600e3 }).next_check_minutes === 120, 'backoff grows with idle time');
+
+let r = parse(await max.bridge_check({}));
+ok(r.unread === 0 && r.stand_down, 'empty inbox: tiny reply with stand_down', JSON.stringify(r));
+r = parse(await jet.bridge_send({ to: 'max', body: 'Build the login page', kind: 'task' }));
+ok(r.sent && r.needs_reply === true, 'task sends and expects a reply', JSON.stringify(r));
+const thread = r.thread;
+ok((await jet.bridge_send({ to: 'max', body: 'Build the login page', kind: 'task', thread })).isError, 'identical message in the same thread is refused');
+ok((await jet.bridge_send({ to: 'jet', body: 'hi' })).isError, 'cannot message yourself');
+r = parse(await jet.bridge_check({}));
+ok(r.unread === 0 && r.next_check_minutes === 3 && !r.stand_down, 'sender waiting on a reply gets a short backoff', JSON.stringify(r));
+r = parse(await max.bridge_check({}));
+ok(r.unread === 1 && r.messages[0].from === 'jet' && r.messages[0].reply_expected && r.next_check_minutes === 2, 'recipient receives it once', JSON.stringify(r));
+r = parse(await max.bridge_check({}));
+ok(r.unread === 0 && r.next_check_minutes === 2, 'it is not delivered twice; reply still owed keeps polling short', JSON.stringify(r));
+r = parse(await max.bridge_send({ to: 'jet', body: 'Done: login page built', kind: 'result', thread }));
+ok(r.needs_reply === false, 'result does not demand a reply');
+r = parse(await max.bridge_check({}));
+ok(r.stand_down === true, 'after replying, Max can stand down', JSON.stringify(r));
+r = parse(await jet.bridge_check({}));
+ok(r.unread === 1 && r.messages[0].kind === 'result', 'Jet gets the result');
+await jet.bridge_send({ to: 'max', body: 'thanks', kind: 'done', thread });
+r = parse(await jet.bridge_check({}));
+ok(r.stand_down === true, 'done closes the thread, Jet stands down', JSON.stringify(r));
+const th = parse(await jet.bridge_thread({ thread }));
+ok(th.length === 3 && th[2].kind === 'done', 'thread history reads in order', JSON.stringify(th));
+for (let i = 0; i < 12; i++) await jet.bridge_send({ to: 'max', body: 'ping ' + i, thread: 'big' });
+r = parse(await max.bridge_check({}));
+ok(r.unread === 10 && r.more_waiting === true && r.next_check_minutes === 2, 'batches of 10 with more_waiting', JSON.stringify({ u: r.unread, m: r.more_waiting }));
+for (let i = 0; i < 30; i++) await jet.bridge_send({ to: 'max', body: 'again ' + i, thread: 'big' });
+ok((await jet.bridge_send({ to: 'max', body: 'one more', thread: 'big' })).isError, 'thread length cap stops runaway threads');
+const st = parse(await max.bridge_stats({}));
+ok(st.totals.checks >= 5 && st.totals.empty >= 2 && typeof st.advice === 'string', 'stats count checks and empty checks', JSON.stringify(st.totals));
+const ro = {}; registerBridge({ registerTool: (n, d, f) => (ro[n] = f) }, env, { userId: 'u1', scopes: ['canvas:read'], agent: 'max' });
+ok((await ro.bridge_check({})).isError, 'read-only connections are refused');
+const anon = {}; registerBridge({ registerTool: (n, d, f) => (anon[n] = f) }, env, { userId: 'u1', scopes: ['canvas:read', 'canvas:write'] });
+ok((await anon.bridge_send({ to: 'max', body: 'x' })).isError, 'a connection with no agent name is refused');
+const other = {}; registerBridge({ registerTool: (n, d, f) => (other[n] = f) }, env, { userId: 'u2', scopes: ['canvas:write'], agent: 'max' });
+ok(parse(await other.bridge_check({})).unread === 0, 'another account cannot see these messages');
+process.exit(failed ? 1 : 0);
