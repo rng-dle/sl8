@@ -1,0 +1,43 @@
+name: Tests
+
+# Runs the server locally (wrangler dev, local D1 and KV, the fake AI/email provider) and the API test suites against it.
+# Nothing here talks to production.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - name: Local settings and database
+        run: |
+          printf 'KEY_ENC_SECRET="local-dev-only-secret-0123456789abcdef"\nTEST_BASE="http://127.0.0.1:8788"\nRESEND_API_KEY="test-resend-key"\n' > .dev.vars
+          npx wrangler d1 migrations apply sl8-db --local
+      - name: Start the fake provider and the server
+        run: |
+          node test/fake-provider.mjs > "$RUNNER_TEMP/fake.log" 2>&1 &
+          npx wrangler dev --port 8787 --local-upstream 127.0.0.1:8787 > "$RUNNER_TEMP/wrangler.log" 2>&1 &
+          for i in $(seq 1 90); do curl -s -o /dev/null http://127.0.0.1:8787/ && exit 0; sleep 1; done
+          echo "server did not start"; tail -n 60 "$RUNNER_TEMP/wrangler.log"; exit 1
+      - name: Smoke test
+        run: bash test/smoke-test.sh
+      - name: MCP connector test
+        run: node test/mcp-test.mjs
+      - name: Account, sharing, marketplace and voice tests
+        run: node test/account-test.mjs && node test/share-test.mjs && node test/share-follow-test.mjs && node test/market-test.mjs && node test/voice-test.mjs
+      - name: Server log on failure
+        if: failure()
+        run: tail -n 120 "$RUNNER_TEMP/wrangler.log"; tail -n 40 "$RUNNER_TEMP/fake.log"
