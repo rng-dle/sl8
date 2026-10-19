@@ -33,11 +33,19 @@ jobs:
           for i in $(seq 1 90); do curl -s -o /dev/null http://127.0.0.1:8787/ && exit 0; sleep 1; done
           echo "server did not start"; tail -n 60 "$RUNNER_TEMP/wrangler.log"; exit 1
       - name: Smoke test
-        run: bash test/smoke-test.sh
+        run: set -o pipefail; bash test/smoke-test.sh 2>&1 | tee -a "$RUNNER_TEMP/tests.log"
       - name: MCP connector test
-        run: node test/mcp-test.mjs
+        run: set -o pipefail; node test/mcp-test.mjs 2>&1 | tee -a "$RUNNER_TEMP/tests.log"
       - name: Account, sharing, marketplace and voice tests
-        run: node test/account-test.mjs && node test/share-test.mjs && node test/share-follow-test.mjs && node test/market-test.mjs && node test/voice-test.mjs
-      - name: Server log on failure
+        run: |
+          set -o pipefail
+          rc=0
+          for t in account-test share-test share-follow-test market-test voice-test; do node test/$t.mjs 2>&1 | tee -a "$RUNNER_TEMP/tests.log" || rc=1; done
+          exit $rc
+      # Failures as annotations too, so they can be read from the checks API without downloading the raw log.
+      - name: Report failures
         if: failure()
-        run: tail -n 120 "$RUNNER_TEMP/wrangler.log"; tail -n 40 "$RUNNER_TEMP/fake.log"
+        run: |
+          grep -A2 '^FAIL' "$RUNNER_TEMP/tests.log" | head -n 60 | while IFS= read -r l; do echo "::error title=Test::$l"; done || true
+          echo "::error title=Test output tail::$(tail -n 30 "$RUNNER_TEMP/tests.log" 2>/dev/null | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')"
+          echo "::error title=Server log tail::$(tail -n 40 "$RUNNER_TEMP/wrangler.log" | sed ':a;N;$!ba;s/%/%25/g;s/\n/%0A/g')"
