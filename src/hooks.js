@@ -13,6 +13,9 @@ const okUrl = (env, u) => ROUTINE.test(u) || (!!env.TEST_BASE && u.startsWith(en
 const minCooldown = (env) => (env.TEST_BASE ? 1 : 30);
 const okTopic = (env, u) => NTFY.test(u) || (!!env.TEST_BASE && /^[^?#]+\/ntfy\/[A-Za-z0-9_-]{12,64}$/.test(u) && u.startsWith(env.TEST_BASE + '/ntfy/'));
 const newTopic = (env) => `${env.TEST_BASE ? env.TEST_BASE + '/ntfy' : 'https://ntfy.sh'}/thinksl8-${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`;
+// Hooks on an agent's bridge inbox use note_id "bridge:<agent>" instead of a canvas id.
+const inboxOf = (id) => (String(id).startsWith('bridge:') ? String(id).slice(7) : null);
+const INBOX = /^bridge:[a-z][a-z0-9_-]{1,23}$/;
 const firstLine = (t) => String(t || '').split('\n').map((l) => l.trim()).find(Boolean)?.slice(0, 200) || '(no text)';
 const matches = (hook, texts) => {
   const words = hook.match.split('|').map((w) => w.trim()).filter(Boolean);
@@ -21,9 +24,10 @@ const matches = (hook, texts) => {
 };
 
 async function fire(env, hook, summary) {
-  const note = await env.DB.prepare('SELECT title FROM notes WHERE id = ?').bind(hook.note_id).first();
-  const title = note?.title || 'a canvas';
-  const link = `${origin(env)}/note?id=${hook.note_id}`;
+  const inbox = inboxOf(hook.note_id);
+  const note = inbox ? null : await env.DB.prepare('SELECT title FROM notes WHERE id = ?').bind(hook.note_id).first();
+  const title = inbox ? `${inbox}'s inbox` : note?.title || 'a canvas';
+  const link = inbox ? `${origin(env)}/alerts` : `${origin(env)}/note?id=${hook.note_id}`;
   let status;
   try {
     if (hook.kind === 'routine') {
@@ -33,7 +37,9 @@ async function fire(env, hook, summary) {
       const res = await fetch(hook.url, {
         method: 'POST',
         headers: { authorization: 'Bearer ' + token, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-        body: JSON.stringify({ text: `ThinkSL8 alert: something new on the canvas "${title}" (canvas_id ${hook.note_id}). Latest: ${summary}` }),
+        body: JSON.stringify({ text: inbox
+          ? `ThinkSL8 bridge: new message for ${inbox}. ${summary}\nRead it with the ThinkSL8 tool bridge_check (only unread messages come back), act, reply with bridge_send, then stop.`
+          : `ThinkSL8 alert: something new on the canvas "${title}" (canvas_id ${hook.note_id}). Latest: ${summary}` }),
       });
       status = res.ok ? 'woke the routine' : `routine returned ${res.status}: ${(await res.text()).slice(0, 120)}`;
     } else if (hook.kind === 'push') {
@@ -117,23 +123,30 @@ export async function alertsPage(req, env) {
     } else if (action === 'test') {
       const hook = await env.DB.prepare('SELECT * FROM canvas_hooks WHERE id = ? AND user_id = ?').bind(String(f.get('id')), user.id).first();
       flash = hook ? 'Test: ' + (await fire(env, hook, 'Test alert from the ThinkSL8 alerts page')) : 'No such alert.';
+    } else if (action === 'copy') {
+      const hook = await env.DB.prepare('SELECT * FROM canvas_hooks WHERE id = ? AND user_id = ?').bind(String(f.get('id')), user.id).first();
+      flash = hook ? await copyHook(env, user, hook, String(f.get('note_id') || '')) : 'No such alert.';
     } else return page('<h1>Not allowed</h1>', 400);
   } else if (req.method !== 'GET') return page('<h1>Not allowed</h1>', 405);
 
-  const [{ results: canvases }, { results: hooks }] = await env.DB.batch([
+  const [{ results: canvases }, { results: hooks }, { results: agents }] = await env.DB.batch([
     env.DB.prepare('SELECT id, title FROM notes WHERE user_id = ? ORDER BY updated_at DESC LIMIT 300').bind(user.id),
     env.DB.prepare('SELECT h.*, n.title FROM canvas_hooks h LEFT JOIN notes n ON n.id = h.note_id WHERE h.user_id = ? ORDER BY h.created_at').bind(user.id),
+    env.DB.prepare('SELECT a FROM (SELECT from_agent AS a FROM bridge_messages WHERE user_id = ? UNION SELECT to_agent FROM bridge_messages WHERE user_id = ?) ORDER BY a LIMIT 50').bind(user.id, user.id),
   ]);
+  const names = [...new Set(['jet', 'max', 'josh', ...agents.map((r) => r.a)])];
+  const targets = `<optgroup label="AI inboxes (the bridge)">${names.map((a) => `<option value="bridge:${esc(a)}">Messages to ${esc(a)}</option>`).join('')}</optgroup>`;
   const when = (t) => (t ? new Date(t).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'never');
-  const list = hooks.map((h) => `<div class="hook"><b>${esc(h.label || (h.kind === 'routine' ? 'Claude routine' : h.kind === 'push' ? 'Push to my phone' : 'Email me'))}</b> on <i>${esc(h.title || 'deleted canvas')}</i>
+  const list = hooks.map((h) => `<div class="hook"><b>${esc(h.label || (h.kind === 'routine' ? 'Claude routine' : h.kind === 'push' ? 'Push to my phone' : 'Email me'))}</b> on <i>${esc(inboxOf(h.note_id) ? `messages to ${inboxOf(h.note_id)}` : h.title || 'deleted canvas')}</i>
 <div class="muted">${h.kind === 'routine' ? 'Wakes a Claude routine' : h.kind === 'push' ? `Pushes to the ntfy topic <b>${esc(h.url.slice(h.url.lastIndexOf('/') + 1))}</b>${h.secret ? ' with your ntfy token' : ''}` : 'Emails ' + esc(user.email)}${h.match ? ` · only when the text contains ${esc(h.match.split('|').join(' or '))}` : ''} · at most every ${h.cooldown} s<br>Last: ${when(h.last_fired_at)}${h.last_status ? ' · ' + esc(h.last_status) : ''}${h.pending_since ? ' · one waiting' : ''}</div>
-<form class="inline" method="post"><input type="hidden" name="id" value="${esc(h.id)}"><button name="action" value="test">Send a test</button> <button name="action" value="delete">Remove</button></form></div>`).join('') || '<p class="muted">No alerts yet.</p>';
+<form class="inline" method="post"><input type="hidden" name="id" value="${esc(h.id)}"><button name="action" value="test">Send a test</button> <button name="action" value="delete">Remove</button></form>
+<form class="inline" method="post"><input type="hidden" name="id" value="${esc(h.id)}"><select name="note_id" aria-label="Also use for">${targets}</select> <button name="action" value="copy">Also use for this</button></form></div>`).join('') || '<p class="muted">No alerts yet.</p>';
   const opts = canvases.map((c) => `<option value="${esc(c.id)}">${esc(c.title)}</option>`).join('');
-  return page(`<h1>Alerts</h1><p class="muted">When an AI connected to ThinkSL8 adds or changes something on a canvas, ThinkSL8 can wake a Claude routine or email you. Your own edits in the app don't trigger alerts.</p>
+  return page(`<h1>Alerts</h1><p class="muted">When an AI connected to ThinkSL8 adds or changes something on a canvas, or messages another AI on the bridge, ThinkSL8 can wake a Claude routine, push to your phone or email you. Point "Messages to jet" at Jet's routine so Jet answers Max on its own, and "Messages to josh" at your phone so you only hear about what needs you. Your own edits in the app don't trigger alerts.</p>
 ${flash ? `<p><b>${esc(flash)}</b></p>` : ''}${list}
 <h2>Add an alert</h2>
 <form method="post"><input type="hidden" name="action" value="add">
-<label for="c">Canvas</label><select id="c" name="note_id" required>${opts}</select>
+<label for="c">When this changes</label><select id="c" name="note_id" required>${targets}<optgroup label="Canvases">${opts}</optgroup></select>
 <label for="k">What happens</label><select id="k" name="kind"><option value="push">Push to my phone (ntfy app)</option><option value="routine">Wake a Claude routine</option><option value="email">Email me${canSendMail(env) ? '' : " (email isn't set up on this server yet)"}</option></select>
 <label for="l">Name (optional)</label><input id="l" type="text" name="label" maxlength="80" placeholder="Wake claude-ai">
 <label for="n">ntfy topic (for a phone push; leave empty and one is made for you)</label><input id="n" type="text" name="topic" maxlength="64" placeholder="thinksl8-…">
@@ -153,7 +166,7 @@ async function addHook(env, user, f) {
   const label = String(f.get('label') || '').trim().slice(0, 80);
   const match = String(f.get('match') || '').trim().slice(0, 300);
   const cooldown = Math.min(86400, Math.max(minCooldown(env), Math.round(Number(f.get('cooldown')) || 120)));
-  if (!(await env.DB.prepare('SELECT 1 FROM notes WHERE id = ? AND user_id = ?').bind(noteId, user.id).first())) return 'Pick one of your canvases.';
+  if (!INBOX.test(noteId) && !(await env.DB.prepare('SELECT 1 FROM notes WHERE id = ? AND user_id = ?').bind(noteId, user.id).first())) return 'Pick one of your canvases or an AI inbox.';
   const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM canvas_hooks WHERE user_id = ?').bind(user.id).first('n');
   if (n >= MAX_HOOKS) return `You already have ${MAX_HOOKS} alerts.`;
   let url = null, secret = null;
@@ -181,4 +194,15 @@ async function addHook(env, user, f) {
   await env.DB.prepare('INSERT INTO canvas_hooks (id, user_id, note_id, kind, label, url, secret, match, cooldown, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .bind(crypto.randomUUID(), user.id, noteId, kind, label, url, secret, match, cooldown, Date.now()).run();
   return kind === 'push' ? `Alert added. In the ntfy app, subscribe to the topic ${url.slice(url.lastIndexOf('/') + 1)}` : 'Alert added.';
+}
+
+// Reuse an alert (with its sealed token) for another canvas or inbox, so the routine token never has to be pasted again.
+async function copyHook(env, user, hook, noteId) {
+  if (!INBOX.test(noteId) && !(await env.DB.prepare('SELECT 1 FROM notes WHERE id = ? AND user_id = ?').bind(noteId, user.id).first())) return 'Pick one of your canvases or an AI inbox.';
+  if (noteId === hook.note_id) return 'That alert already covers it.';
+  const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM canvas_hooks WHERE user_id = ?').bind(user.id).first('n');
+  if (n >= MAX_HOOKS) return `You already have ${MAX_HOOKS} alerts.`;
+  await env.DB.prepare('INSERT INTO canvas_hooks (id, user_id, note_id, kind, label, url, secret, match, cooldown, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
+    .bind(crypto.randomUUID(), user.id, noteId, hook.kind, hook.label, hook.url, hook.secret, INBOX.test(noteId) ? '' : hook.match, hook.cooldown, Date.now()).run();
+  return 'Alert added.';
 }

@@ -13,6 +13,7 @@ const out = (o) => ({ content: [{ type: 'text', text: typeof o === 'string' ? o 
 const err = (m) => ({ isError: true, content: [{ type: 'text', text: m }] });
 const b64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode(...u8.subarray(i, i + 0x8000)); return btoa(s); };
 const owns = (env, userId, noteId) => env.DB.prepare('SELECT title FROM notes WHERE id = ? AND user_id = ?').bind(noteId, userId).first();
+const BRIDGE_LOG = 'Claude Bridge Log'; // bridge messages are copied here, if the user has a canvas with this title
 const NEED_WRITE = 'This connection is read-only. Reconnect ThinkSL8 and tick "allow adding recordings and transcripts" to use this tool.';
 
 function buildServer(env, ctx, { userId, scopes = [], agent }) {
@@ -21,22 +22,34 @@ function buildServer(env, ctx, { userId, scopes = [], agent }) {
   const save = async (noteId, ops) => (await saved(ctx, env, noteId, {}, saveOps(env, noteId, ops), ops)).ok;
   // Canvas alerts (/alerts): run after the reply so a slow routine or mail call never delays the tool.
   const alert = (noteId, ...texts) => ctx.waitUntil(onAiWrite(env, userId, noteId, texts.filter((t) => typeof t === 'string' && t)).catch(() => {}));
-  // Where a new item goes when the AI gives no position: just below everything already on the canvas.
-  const nextY = async (canvasId) => {
-    const { results } = await env.DB.prepare("SELECT data FROM items WHERE note_id = ? AND json_extract(data, '$.kind') IN ('text', 'portal', 'voice')").bind(canvasId).all();
-    let bottom = null;
-    for (const r of results) {
-      const it = JSON.parse(r.data);
-      let b;
-      if (it.kind === 'text') {
-        const w = it.w || 320, sz = it.s || 17, lines = String(it.text || '').split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / Math.max(8, w / (sz * 0.55)))), 0);
-        b = (it.y || 0) + lines * sz * 1.4;
-      } else b = (it.y || 0) + (it.h || 132);
-      if (bottom === null || b > bottom) bottom = b;
-    }
-    return bottom === null ? 0 : bottom + 24;
+  // Layout: items placed by an AI must never overlap what is already there. Heights are estimated on the safe side
+  // (wider characters and taller lines than the canvas really draws), and anything that would collide is pushed down.
+  const GAP = 32;
+  const boxOf = (it) => {
+    const w = it.w || (it.kind === 'portal' ? 240 : it.kind === 'voice' ? 260 : 320);
+    if (it.kind !== 'text') return { x: it.x || 0, y: it.y || 0, w, h: it.h || (it.kind === 'voice' ? 52 : 132) };
+    const sz = it.s || 17, perLine = Math.max(6, Math.floor((w - 12) / (sz * 0.62)));
+    const lines = String(it.text || '').split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / perLine)), 0);
+    return { x: it.x || 0, y: it.y || 0, w, h: Math.ceil(lines * sz * 1.5 + 16) };
   };
-
+  const boxes = async (canvasId, skipId) => {
+    const { results } = await env.DB.prepare("SELECT data FROM items WHERE note_id = ? AND json_extract(data, '$.kind') IN ('text', 'portal', 'voice', 'embed')").bind(canvasId).all();
+    return results.map((r) => JSON.parse(r.data)).filter((it) => it.id !== skipId).map(boxOf);
+  };
+  const hits = (a, b) => a.x < b.x + b.w + GAP && b.x < a.x + a.w + GAP && a.y < b.y + b.h + GAP && b.y < a.y + a.h + GAP;
+  // Where to put an item: the requested spot if it is free, otherwise the first free spot straight below it.
+  // With no position, it goes below everything at x = 0.
+  const place = async (canvasId, item, skipId) => {
+    const all = await boxes(canvasId, skipId);
+    const me = boxOf(item);
+    if (item.y == null) { me.x = item.x ?? 0; me.y = all.length ? Math.max(...all.map((b) => b.y + b.h)) + GAP : 0; }
+    for (let i = 0; i < 500; i++) {
+      const hit = all.filter((b) => hits(me, b));
+      if (!hit.length) break;
+      me.y = Math.max(...hit.map((b) => b.y + b.h)) + GAP;
+    }
+    return { x: Math.round(me.x), y: Math.round(me.y) };
+  };
   // The clock, for AI apps that can't read one (some sandboxes block every time source). Same answer for everyone; no user data.
   s.registerTool('current_time', { description: 'The current date and time, in UTC and in Karachi time (PKT). Use it to timestamp entries when you have no clock of your own.' }, async () => {
     const now = new Date();
@@ -96,7 +109,7 @@ function buildServer(env, ctx, { userId, scopes = [], agent }) {
     return out('Transcript saved.');
   });
 
-  s.registerTool('add_voice_note', { description: 'Add a voice note to a canvas from audio you have (WebM, MP4/M4A, Ogg, MP3 or WAV, base64, up to 2 MB), with an optional transcript. Needs write access.', inputSchema: { canvas_id: z.string(), audio_base64: z.string().max(2_800_000), transcript: z.string().max(40000).optional(), seconds: z.number().min(0).max(7200).optional(), x: z.number().optional(), y: z.number().optional() } }, async ({ canvas_id, audio_base64, transcript, seconds, x = 0, y = 0 }) => {
+  s.registerTool('add_voice_note', { description: 'Add a voice note to a canvas from audio you have (WebM, MP4/M4A, Ogg, MP3 or WAV, base64, up to 2 MB), with an optional transcript. Needs write access.', inputSchema: { canvas_id: z.string(), audio_base64: z.string().max(2_800_000), transcript: z.string().max(40000).optional(), seconds: z.number().min(0).max(7200).optional(), x: z.number().optional(), y: z.number().optional() } }, async ({ canvas_id, audio_base64, transcript, seconds, x = 0, y }) => {
     if (!canWrite) return err(NEED_WRITE);
     if (!(await owns(env, userId, canvas_id))) return err('No such canvas.');
     let bytes;
@@ -108,7 +121,8 @@ function buildServer(env, ctx, { userId, scopes = [], agent }) {
     if (keys.length >= MAX_FILES) return err("The user's file space is full.");
     const file = crypto.randomUUID();
     await env.FILES.put(fileKey(userId, file), bytes, { metadata: { type, size: bytes.length, at: Date.now() } });
-    const item = { id: crypto.randomUUID(), kind: 'voice', t: Date.now(), file, x: Math.round(x), y: Math.round(y), w: 260, h: 52, ...(seconds != null && { dur: seconds }), ...(transcript && { text: transcript }) };
+    const item = { id: crypto.randomUUID(), kind: 'voice', t: Date.now(), file, x, y, w: 260, h: 52, ...(seconds != null && { dur: seconds }), ...(transcript && { text: transcript }) };
+    Object.assign(item, await place(canvas_id, item));
     if (!(await save(canvas_id, [{ put: item }]))) return err('Could not add the voice note.');
     alert(canvas_id, transcript, 'New voice note');
     return out({ added: item.id });
@@ -123,10 +137,11 @@ function buildServer(env, ctx, { userId, scopes = [], agent }) {
     return out({ id, title: clean });
   });
 
-  s.registerTool('add_note', { description: 'Add a typed text note to a canvas. Without x and y it lands below the existing notes. Needs write access.', inputSchema: { canvas_id: z.string(), text: z.string().min(1).max(40000), x: z.number().optional(), y: z.number().optional() } }, async ({ canvas_id, text, x, y }) => {
+  s.registerTool('add_note', { description: 'Add a typed text note to a canvas. Without x and y it lands below the existing notes; with them, it is moved down if it would overlap anything. Needs write access.', inputSchema: { canvas_id: z.string(), text: z.string().min(1).max(40000), x: z.number().optional(), y: z.number().optional() } }, async ({ canvas_id, text, x, y }) => {
     if (!canWrite) return err(NEED_WRITE);
     if (!(await owns(env, userId, canvas_id))) return err('No such canvas.');
-    const item = { id: crypto.randomUUID(), kind: 'text', t: Date.now(), x: Math.round(x ?? 0), y: Math.round(y ?? await nextY(canvas_id)), w: 320, s: 17, c: 'ink', text };
+    const item = { id: crypto.randomUUID(), kind: 'text', t: Date.now(), x: x ?? 0, y, w: 320, s: 17, c: 'ink', text };
+    Object.assign(item, await place(canvas_id, item));
     if (!(await save(canvas_id, [{ put: item }]))) return err('Could not add the note.');
     alert(canvas_id, text);
     return out({ added: item.id });
@@ -135,7 +150,8 @@ function buildServer(env, ctx, { userId, scopes = [], agent }) {
   s.registerTool('add_portal', { description: 'Add a portal card to a canvas that opens another of the user\'s canvases. Without x and y it lands below the existing items. Needs write access.', inputSchema: { canvas_id: z.string(), target_canvas_id: z.string(), x: z.number().optional(), y: z.number().optional() } }, async ({ canvas_id, target_canvas_id, x, y }) => {
     if (!canWrite) return err(NEED_WRITE);
     if (!(await owns(env, userId, canvas_id)) || !(await owns(env, userId, target_canvas_id))) return err('No such canvas.');
-    const item = { id: crypto.randomUUID(), kind: 'portal', t: Date.now(), x: Math.round(x ?? 0), y: Math.round(y ?? await nextY(canvas_id)), w: 240, h: 132, target: target_canvas_id };
+    const item = { id: crypto.randomUUID(), kind: 'portal', t: Date.now(), x: x ?? 0, y, w: 240, h: 132, target: target_canvas_id };
+    Object.assign(item, await place(canvas_id, item));
     if (!(await save(canvas_id, [{ put: item }]))) return err('Could not add the portal.');
     alert(canvas_id, 'New portal on the canvas');
     return out({ added: item.id });
@@ -153,8 +169,24 @@ function buildServer(env, ctx, { userId, scopes = [], agent }) {
     if (!it || !['text', 'portal', 'voice'].includes(it.kind)) return err('No such note, portal or voice note.');
     if (text === undefined && x === undefined && y === undefined) return err('Nothing to change.');
     if (text !== undefined && it.kind !== 'text') return err('Only typed notes have text. Use set_voice_transcript for voice notes.');
-    const next = { ...it, ...(text !== undefined && { text }), ...(x !== undefined && { x: Math.round(x) }), ...(y !== undefined && { y: Math.round(y) }) };
-    if (!(await save(canvas_id, [{ put: next }]))) return err('Could not save the change.');
+    const next = { ...it, ...(text !== undefined && { text }), ...(x !== undefined && { x }), ...(y !== undefined && { y }) };
+    const ops = [{ put: next }];
+    if (x !== undefined || y !== undefined) Object.assign(next, await place(canvas_id, next, it.id)); // a move never lands on top of something else
+    else {
+      // Longer text grows the box downward: push whatever it would now cover (and everything below it in that column) down.
+      const grow = boxOf(next).h - boxOf(it).h;
+      if (grow > 0) {
+        const me = boxOf(next);
+        const { results } = await env.DB.prepare("SELECT data FROM items WHERE note_id = ? AND json_extract(data, '$.kind') IN ('text', 'portal', 'voice', 'embed')").bind(canvas_id).all();
+        const below = results.map((r) => JSON.parse(r.data)).filter((o) => o.id !== it.id && (o.y || 0) > me.y && (o.x || 0) < me.x + me.w + GAP && me.x < (o.x || 0) + boxOf(o).w + GAP);
+        const firstHit = below.filter((o) => hits(me, boxOf(o))).reduce((m, o) => Math.min(m, o.y || 0), Infinity);
+        if (firstHit !== Infinity) {
+          const shift = me.y + me.h + GAP - firstHit;
+          for (const o of below) if ((o.y || 0) >= firstHit) ops.push({ put: { ...o, y: Math.round((o.y || 0) + shift) } });
+        }
+      }
+    }
+    if (!(await save(canvas_id, ops))) return err('Could not save the change.');
     alert(canvas_id, text, 'An item was moved');
     return out('Updated.');
   });
@@ -175,7 +207,17 @@ function buildServer(env, ctx, { userId, scopes = [], agent }) {
     const res = await env.DB.prepare('UPDATE notes SET title = ?, updated_at = ? WHERE id = ? AND user_id = ?').bind(clean, Date.now(), canvas_id, userId).run();
     return res.meta?.changes ? out({ id: canvas_id, title: clean }) : err('No such canvas.');
   });
-  registerBridge(s, env, { userId, scopes, agent });
+  // Bridge side effects run after the reply: wake the recipient's inbox alerts, and mirror onto the "Claude Bridge Log" canvas.
+  registerBridge(s, env, { userId, scopes, agent }, {
+    wake: (to, text) => ctx.waitUntil(onAiWrite(env, userId, 'bridge:' + to, [text]).catch(() => {})),
+    mirror: (text) => ctx.waitUntil((async () => {
+      const log = await env.DB.prepare('SELECT id FROM notes WHERE user_id = ? AND title = ? ORDER BY updated_at DESC LIMIT 1').bind(userId, BRIDGE_LOG).first('id');
+      if (!log) return;
+      const item = { id: crypto.randomUUID(), kind: 'text', t: Date.now(), x: 0, w: 520, s: 15, c: 'ink', text: text.slice(0, 40000) };
+      Object.assign(item, await place(log, item));
+      await save(log, [{ put: item }]);
+    })().catch(() => {})),
+  });
   return s;
 }
 
