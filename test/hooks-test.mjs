@@ -126,6 +126,17 @@ let pushes = [];
 for (let i = 0; i < 40 && !pushes.length; i++) { await sleep(150); pushes = await (await fetch(`${F}/__pushes?topic=${topic}`)).json(); }
 ok(pushes.length === 1 && pushes[0].title === 'ThinkSL8 · Claude Bridge Log' && pushes[0].message.includes('[ID 0009]') && pushes[0].click.endsWith(`/note?id=${bridge.id}`), 'a matching entry pushes to the phone with a link', JSON.stringify(pushes));
 
+// ntfy access token: sent as a bearer header, stored sealed, never shown again
+p = await alice.form({ action: 'add', note_id: bridge.id, kind: 'push', topic: 'tokenwatch-topic-0001', ntfytoken: 'tk_abcdefghijklmnopqrstuvwxyz123', match: 'TO: tokenwatch', cooldown: '1' });
+ok(/Alert added/.test(p.html) && !p.html.includes('tk_abcdefghij') && p.html.includes('with your ntfy token'), 'a push alert can carry an ntfy token, which is never shown');
+p = await alice.form({ action: 'add', note_id: bridge.id, kind: 'push', ntfytoken: 'bad', cooldown: '1' });
+ok(/ntfy access token/.test(p.html), 'a malformed ntfy token is refused');
+await call(token, 'add_note', { canvas_id: bridge.id, text: 'TO: tokenwatch please' });
+let tp = [];
+for (let i = 0; i < 40 && !tp.length; i++) { await sleep(150); tp = await (await fetch(`${F}/__pushes?topic=tokenwatch-topic-0001`)).json(); }
+ok(tp.length === 1 && tp[0].auth === 'Bearer tk_abcdefghijklmnopqrstuvwxyz123', 'the push carries the token as a bearer header', JSON.stringify(tp));
+ok(pushes.length === 1 && (await (await fetch(`${F}/__pushes?topic=${topic}`)).json())[0].auth === '', 'an alert without a token sends none');
+
 // removing
 page = await (await fetch(B + '/alerts', { headers: { cookie: alice.cookie() } })).text();
 for (const id of [...page.matchAll(/name="id" value="([^"]+)"/g)].map((m) => m[1])) await alice.form({ action: 'delete', id });
