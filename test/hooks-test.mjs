@@ -115,6 +115,17 @@ let mails = [];
 for (let i = 0; i < 40 && !mails.length; i++) { await sleep(150); mails = await emails(); }
 ok(mails.length === 1 && mails[0].subject === 'ThinkSL8: Milk and eggs' && mails[0].text.includes(`/note?id=${other.id}`), 'an AI write emails the owner with a link', JSON.stringify(mails));
 
+// phone pushes (ntfy)
+p = await alice.form({ action: 'add', note_id: bridge.id, kind: 'push', label: 'My phone', match: 'TO: josh', cooldown: '1' });
+const topic = (p.html.match(/subscribe to the topic (thinksl8-[a-z0-9]{20})/) || [])[1];
+ok(!!topic && p.html.includes(`<b>${topic}</b>`), 'a push alert gets its own private topic', p.html.slice(0, 400));
+p = await alice.form({ action: 'add', note_id: bridge.id, kind: 'push', topic: 'short', cooldown: '1' });
+ok(/12 to 64/.test(p.html), 'a too-short topic is refused');
+await call(token, 'add_note', { canvas_id: bridge.id, text: '## [ID 0009] FROM: claude-ai | TO: josh | STATUS: needs-josh\nApprove the outreach batch?' });
+let pushes = [];
+for (let i = 0; i < 40 && !pushes.length; i++) { await sleep(150); pushes = await (await fetch(`${F}/__pushes?topic=${topic}`)).json(); }
+ok(pushes.length === 1 && pushes[0].title === 'ThinkSL8 · Claude Bridge Log' && pushes[0].message.includes('[ID 0009]') && pushes[0].click.endsWith(`/note?id=${bridge.id}`), 'a matching entry pushes to the phone with a link', JSON.stringify(pushes));
+
 // removing
 page = await (await fetch(B + '/alerts', { headers: { cookie: alice.cookie() } })).text();
 for (const id of [...page.matchAll(/name="id" value="([^"]+)"/g)].map((m) => m[1])) await alice.form({ action: 'delete', id });

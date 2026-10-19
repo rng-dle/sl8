@@ -9,6 +9,7 @@ const challenges = new Map(); // code -> code_challenge
 const revokedKeys = new Set(); // keys revoked "on the provider's side" after connecting
 const emails = [];
 const fires = [];
+const pushes = [];
 const b64url = (b) => b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 const keyOf = (req) => (req.headers.authorization || '').replace(/^Bearer /, '') || req.headers['x-api-key'] || '';
@@ -58,6 +59,8 @@ createServer(async (req, res) => {
     fires.push({ id: rest[0], auth: req.headers.authorization || '', body: await readBody(req), at: Date.now() });
     return send(res, 200, { type: 'routine_fire', claude_code_session_id: 'session_test', claude_code_session_url: 'https://claude.ai/code/session_test' });
   }
+  if (url.pathname === '/ntfy' && req.method === 'POST') { const m = await readBody(req); m.at = Date.now(); pushes.push(m); return send(res, 200, { id: randomUUID() }); }
+  if (url.pathname === '/__pushes') return send(res, 200, pushes.filter((m) => m.topic === url.searchParams.get('topic')));
   if (url.pathname === '/__fires') return send(res, 200, fires.filter((f) => f.id === url.searchParams.get('id')));
   if (key.includes('revoked') || revokedKeys.has(key)) return send(res, 401, { error: { message: 'Key revoked' } });
   if (key.includes('bad')) return send(res, 401, { error: { message: 'Invalid key' } });
