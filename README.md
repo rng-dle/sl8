@@ -29,7 +29,7 @@ Mail goes out from `no-reply@thinksl8.com` (override with a `MAIL_FROM` variable
 `.dev.vars` (git-ignored) holds the local secret and points AI and email at a local stand-in, so nothing real is called:
 
 ```
-printf 'KEY_ENC_SECRET="local-dev-only-secret-0123456789abcdef"\nTEST_BASE="http://127.0.0.1:8788"\nRESEND_API_KEY="test-resend-key"\n' > .dev.vars
+printf 'KEY_ENC_SECRET="local-dev-only-secret-0123456789abcdef"\nTEST_BASE="http://127.0.0.1:8788"\nRESEND_API_KEY="test-resend-key"\nMCP_RESOURCE="http://127.0.0.1:8787/mcp"\n' > .dev.vars
 npx wrangler d1 migrations apply sl8-db --local
 node test/fake-provider.mjs &
 npx wrangler dev --port 8787 --local-upstream 127.0.0.1:8787
@@ -65,9 +65,9 @@ The Python tests need `pip install playwright && playwright install chromium`.
 
 ## Connect your own AI (MCP)
 
-ThinkSL8 is a remote MCP server at `https://thinksl8.com/mcp` (OAuth 2.1, Streamable HTTP, stateless). In Claude, add a custom connector with that URL; sign in to ThinkSL8 in the same browser when asked, then approve. Approval is read-only unless you tick "Also allow adding voice notes and transcripts".
+ThinkSL8 is a remote MCP server at `https://thinksl8.com/mcp` (OAuth 2.1, Streamable HTTP, stateless). In Claude, add a custom connector with that URL; sign in to ThinkSL8 in the same browser when asked, then approve. Approval is read-only unless you tick "Also allow creating canvases and adding typed notes, portals, voice notes and transcripts" and/or "Also allow editing, moving, renaming and deleting what is already there" (two separate approvals).
 
-Tools: `list_canvases`, `read_canvas`, `search` (typed notes and voice transcripts), `get_voice_note` (transcript and optionally the audio, up to 2 MB), and, with write access, `set_voice_transcript` and `add_voice_note`. Every query is scoped to the signed-in user's own canvases. Writes go through the same validation and live sync as the app.
+Tools: `list_canvases`, `read_canvas`, `search` (typed notes and voice transcripts), `get_voice_note` (transcript and optionally the audio, up to 2 MB), with write access, `create_canvas` (a new empty canvas, up to 500 per user), `add_note` (a typed text note, placed below the existing items unless x and y are given), `add_portal`, `set_voice_transcript` and `add_voice_note`, and with edit access, `update_item` (change a typed note's text and/or move a note, portal or voice note), `delete_item` and `rename_canvas`. Account, password, sharing and billing actions are deliberately not available to a connected AI. Every query is scoped to the signed-in user's own canvases. Writes go through the same validation and live sync as the app.
 
 Built on Cloudflare's `@cloudflare/workers-oauth-provider` and `agents` (`createMcpHandler`). `src/index.js` wraps the app with the provider; `src/mcp.js` has the consent screen and the tools. It needs the KV binding `OAUTH_KV` (one namespace, created once). Tokens are issued for `https://thinksl8.com/mcp`, so the connector only works on that address (set `MCP_RESOURCE` to test elsewhere, and run `wrangler dev` with `--local-upstream`). Approving again for the same app replaces its earlier grant. Test: `node test/mcp-test.mjs`.
 

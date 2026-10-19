@@ -1,5 +1,5 @@
 // The ThinkSL8 MCP connector: lets a user's own AI (Claude and others) read their canvases and voice notes, and, if they allow it, add
-// recordings and transcripts. Built on Cloudflare's workers-oauth-provider (OAuth 2.1, MIT) and agents' createMcpHandler (stateless).
+// canvases, typed notes, portals, recordings and transcripts ("canvas:write"), and, as a separate approval, edit, move, rename and delete ("canvas:edit"). Built on Cloudflare's workers-oauth-provider (OAuth 2.1, MIT) and agents' createMcpHandler (stateless).
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { McpServer } from '@modelcontextprotocol/server';
 import { createMcpHandler } from 'agents/mcp/server';
@@ -17,6 +17,21 @@ function buildServer(env, ctx, { userId, scopes = [] }) {
   const canWrite = scopes.includes('canvas:write');
   const s = new McpServer({ name: 'thinksl8', version: '1.0.0' });
   const save = async (noteId, ops) => (await saved(ctx, env, noteId, {}, saveOps(env, noteId, ops), ops)).ok;
+  // Where a new item goes when the AI gives no position: just below everything already on the canvas.
+  const nextY = async (canvasId) => {
+    const { results } = await env.DB.prepare("SELECT data FROM items WHERE note_id = ? AND json_extract(data, '$.kind') IN ('text', 'portal', 'voice')").bind(canvasId).all();
+    let bottom = null;
+    for (const r of results) {
+      const it = JSON.parse(r.data);
+      let b;
+      if (it.kind === 'text') {
+        const w = it.w || 320, sz = it.s || 17, lines = String(it.text || '').split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / Math.max(8, w / (sz * 0.55)))), 0);
+        b = (it.y || 0) + lines * sz * 1.4;
+      } else b = (it.y || 0) + (it.h || 132);
+      if (bottom === null || b > bottom) bottom = b;
+    }
+    return bottom === null ? 0 : bottom + 24;
+  };
 
   s.registerTool('list_canvases', { description: "List the user's ThinkSL8 canvases, newest first." }, async () => {
     const { results } = await env.DB.prepare('SELECT id, title, updated_at FROM notes WHERE user_id = ? ORDER BY updated_at DESC LIMIT 100').bind(userId).all();
@@ -83,6 +98,60 @@ function buildServer(env, ctx, { userId, scopes = [] }) {
     const item = { id: crypto.randomUUID(), kind: 'voice', t: Date.now(), file, x: Math.round(x), y: Math.round(y), w: 260, h: 52, ...(seconds != null && { dur: seconds }), ...(transcript && { text: transcript }) };
     return (await save(canvas_id, [{ put: item }])) ? out({ added: item.id }) : err('Could not add the voice note.');
   });
+
+  s.registerTool('create_canvas', { description: 'Create a new, empty canvas with the given title and return its id. Needs write access.', inputSchema: { title: z.string().min(1).max(200) } }, async ({ title }) => {
+    if (!canWrite) return err(NEED_WRITE);
+    const count = await env.DB.prepare('SELECT COUNT(*) AS n FROM notes WHERE user_id = ?').bind(userId).first('n');
+    if (count >= 500) return err('The user already has 500 canvases.');
+    const id = crypto.randomUUID(), now = Date.now(), clean = title.trim().slice(0, 200) || 'Untitled';
+    await env.DB.prepare('INSERT INTO notes VALUES (?, ?, ?, ?, ?)').bind(id, userId, clean, now, now).run();
+    return out({ id, title: clean });
+  });
+
+  s.registerTool('add_note', { description: 'Add a typed text note to a canvas. Without x and y it lands below the existing notes. Needs write access.', inputSchema: { canvas_id: z.string(), text: z.string().min(1).max(40000), x: z.number().optional(), y: z.number().optional() } }, async ({ canvas_id, text, x, y }) => {
+    if (!canWrite) return err(NEED_WRITE);
+    if (!(await owns(env, userId, canvas_id))) return err('No such canvas.');
+    const item = { id: crypto.randomUUID(), kind: 'text', t: Date.now(), x: Math.round(x ?? 0), y: Math.round(y ?? await nextY(canvas_id)), w: 320, s: 17, c: 'ink', text };
+    return (await save(canvas_id, [{ put: item }])) ? out({ added: item.id }) : err('Could not add the note.');
+  });
+
+  s.registerTool('add_portal', { description: 'Add a portal card to a canvas that opens another of the user\'s canvases. Without x and y it lands below the existing items. Needs write access.', inputSchema: { canvas_id: z.string(), target_canvas_id: z.string(), x: z.number().optional(), y: z.number().optional() } }, async ({ canvas_id, target_canvas_id, x, y }) => {
+    if (!canWrite) return err(NEED_WRITE);
+    if (!(await owns(env, userId, canvas_id)) || !(await owns(env, userId, target_canvas_id))) return err('No such canvas.');
+    const item = { id: crypto.randomUUID(), kind: 'portal', t: Date.now(), x: Math.round(x ?? 0), y: Math.round(y ?? await nextY(canvas_id)), w: 240, h: 132, target: target_canvas_id };
+    return (await save(canvas_id, [{ put: item }])) ? out({ added: item.id }) : err('Could not add the portal.');
+  });
+
+  // Editing and deleting need their own approval ("canvas:edit"), separate from adding.
+  const NEED_EDIT = 'This connection cannot edit or delete. Reconnect ThinkSL8 and tick "allow editing and deleting" to use this tool.';
+  const canEdit = scopes.includes('canvas:edit');
+  const itemOf = async (canvasId, itemId) => { const row = await env.DB.prepare('SELECT data FROM items WHERE note_id = ? AND id = ?').bind(canvasId, itemId).first('data'); return row && JSON.parse(row); };
+
+  s.registerTool('update_item', { description: 'Change the text of a typed note and/or move a typed note, portal or voice note. Item ids come from read_canvas. Checklist boxes are text, so tick one by editing its ☐ to ☑. Needs edit access.', inputSchema: { canvas_id: z.string(), item_id: z.string(), text: z.string().min(1).max(40000).optional(), x: z.number().optional(), y: z.number().optional() } }, async ({ canvas_id, item_id, text, x, y }) => {
+    if (!canEdit) return err(NEED_EDIT);
+    if (!(await owns(env, userId, canvas_id))) return err('No such canvas.');
+    const it = await itemOf(canvas_id, item_id);
+    if (!it || !['text', 'portal', 'voice'].includes(it.kind)) return err('No such note, portal or voice note.');
+    if (text === undefined && x === undefined && y === undefined) return err('Nothing to change.');
+    if (text !== undefined && it.kind !== 'text') return err('Only typed notes have text. Use set_voice_transcript for voice notes.');
+    const next = { ...it, ...(text !== undefined && { text }), ...(x !== undefined && { x: Math.round(x) }), ...(y !== undefined && { y: Math.round(y) }) };
+    return (await save(canvas_id, [{ put: next }])) ? out('Updated.') : err('Could not save the change.');
+  });
+
+  s.registerTool('delete_item', { description: 'Delete one typed note, portal or voice note from a canvas. Item ids come from read_canvas. Needs edit access.', inputSchema: { canvas_id: z.string(), item_id: z.string() } }, async ({ canvas_id, item_id }) => {
+    if (!canEdit) return err(NEED_EDIT);
+    if (!(await owns(env, userId, canvas_id))) return err('No such canvas.');
+    const it = await itemOf(canvas_id, item_id);
+    if (!it || !['text', 'portal', 'voice'].includes(it.kind)) return err('No such note, portal or voice note.');
+    return (await save(canvas_id, [{ del: item_id }])) ? out('Deleted.') : err('Could not delete it.');
+  });
+
+  s.registerTool('rename_canvas', { description: 'Change the title of a canvas. Needs edit access.', inputSchema: { canvas_id: z.string(), title: z.string().min(1).max(200) } }, async ({ canvas_id, title }) => {
+    if (!canEdit) return err(NEED_EDIT);
+    const clean = title.trim().slice(0, 200) || 'Untitled';
+    const res = await env.DB.prepare('UPDATE notes SET title = ?, updated_at = ? WHERE id = ? AND user_id = ?').bind(clean, Date.now(), canvas_id, userId).run();
+    return res.meta?.changes ? out({ id: canvas_id, title: clean }) : err('No such canvas.');
+  });
   return s;
 }
 
@@ -111,7 +180,8 @@ export async function authorize(req, env) {
   if (req.method === 'GET') {
     return page(`<h1>Connect ${esc(client?.clientName || 'an app')} to ThinkSL8?</h1><p>Signed in as ${esc(user.email)}. This lets the app read your canvases, typed notes and voice notes (with transcripts). It never sees your password and you can stop it by deleting the connection in the app.</p>
 <form method="post" action="/authorize"><input type="hidden" name="q" value="${esc(url.search)}">
-<label><input type="checkbox" name="write" value="1"> Also allow adding voice notes and transcripts</label>
+<label><input type="checkbox" name="write" value="1"> Also allow creating canvases and adding typed notes, portals, voice notes and transcripts</label>
+<label><input type="checkbox" name="edit" value="1"> Also allow editing, moving, renaming and deleting what is already there</label>
 <button class="go" name="decision" value="allow">Allow</button> <button name="decision" value="deny">Cancel</button></form>`);
   }
   if (req.method !== 'POST' || req.headers.get('origin') !== url.origin) return page('<h1>Not allowed</h1>', 403);
@@ -120,7 +190,7 @@ export async function authorize(req, env) {
     const back = new URL(oauth.redirectUri); back.searchParams.set('error', 'access_denied'); if (oauth.state) back.searchParams.set('state', oauth.state);
     return Response.redirect(back.toString(), 302);
   }
-  const scopes = form.get('write') ? ['canvas:read', 'canvas:write'] : ['canvas:read'];
+  const scopes = ['canvas:read', ...(form.get('write') ? ['canvas:write'] : []), ...(form.get('edit') ? ['canvas:edit'] : [])];
   const { redirectTo } = await env.OAUTH_PROVIDER.completeAuthorization({ request: oauth, userId: user.id, metadata: { client: client?.clientName || '' }, scope: scopes, props: { userId: user.id, scopes } });
   return Response.redirect(redirectTo, 302);
 }
