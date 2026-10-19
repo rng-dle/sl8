@@ -2,6 +2,7 @@
 import OAuthProvider from '@cloudflare/workers-oauth-provider';
 import app, { Room } from './worker.js';
 import { McpApi, authorize } from './mcp.js';
+import { alertsPage, firePending } from './hooks.js';
 import assetlinks from '../android/assetlinks.json';
 
 export { Room };
@@ -14,7 +15,7 @@ export default {
     provider ??= new OAuthProvider({
       apiRoute: '/mcp',
       apiHandler: McpApi,
-      defaultHandler: { fetch: async (r, e, c) => (await authorize(r, e)) || app.fetch(r, e, c) },
+      defaultHandler: { fetch: async (r, e, c) => (await authorize(r, e)) || (await alertsPage(r, e)) || app.fetch(r, e, c) },
       authorizeEndpoint: '/authorize',
       tokenEndpoint: '/oauth/token',
       clientRegistrationEndpoint: '/oauth/register',
@@ -22,5 +23,9 @@ export default {
       resourceMetadata: { resource: env.MCP_RESOURCE || 'https://thinksl8.com/mcp', authorization_servers: [new URL(env.MCP_RESOURCE || 'https://thinksl8.com').origin], scopes_supported: ['canvas:read', 'canvas:write', 'canvas:edit'] },
     });
     return provider.fetch(req, env, ctx);
+  },
+  // Every few minutes (wrangler.toml [triggers]): send canvas alerts that waited out a cooldown.
+  scheduled(event, env, ctx) {
+    ctx.waitUntil(firePending(env));
   },
 };

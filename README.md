@@ -32,13 +32,13 @@ Mail goes out from `no-reply@thinksl8.com` (override with a `MAIL_FROM` variable
 printf 'KEY_ENC_SECRET="local-dev-only-secret-0123456789abcdef"\nTEST_BASE="http://127.0.0.1:8788"\nRESEND_API_KEY="test-resend-key"\nMCP_RESOURCE="http://127.0.0.1:8787/mcp"\n' > .dev.vars
 npx wrangler d1 migrations apply sl8-db --local
 node test/fake-provider.mjs &
-npx wrangler dev --port 8787 --local-upstream 127.0.0.1:8787
+npx wrangler dev --port 8787 --local-upstream 127.0.0.1:8787 --test-scheduled
 ```
 
 Then, in another terminal:
 
 ```
-bash test/smoke-test.sh && node test/ai-test.mjs && node test/account-test.mjs && node test/share-test.mjs && node test/share-follow-test.mjs && node test/market-test.mjs && node test/voice-test.mjs && node test/mcp-test.mjs && python3 test/pen-test.py && python3 test/journey.py && python3 test/share-journey.py && python3 test/voice-journey.py
+bash test/smoke-test.sh && node test/ai-test.mjs && node test/account-test.mjs && node test/share-test.mjs && node test/share-follow-test.mjs && node test/market-test.mjs && node test/voice-test.mjs && node test/mcp-test.mjs && node test/hooks-test.mjs && python3 test/pen-test.py && python3 test/journey.py && python3 test/share-journey.py && python3 test/voice-journey.py
 ```
 
 - `smoke-test.sh`: accounts, saving, isolation between users, lockout (per account and network, so strangers can't lock you out), logout.
@@ -70,6 +70,10 @@ ThinkSL8 is a remote MCP server at `https://thinksl8.com/mcp` (OAuth 2.1, Stream
 Tools: `list_canvases`, `read_canvas`, `search` (typed notes and voice transcripts), `get_voice_note` (transcript and optionally the audio, up to 2 MB), with write access, `create_canvas` (a new empty canvas, up to 500 per user), `add_note` (a typed text note, placed below the existing items unless x and y are given), `add_portal`, `set_voice_transcript` and `add_voice_note`, and with edit access, `update_item` (change a typed note's text and/or move a note, portal or voice note), `delete_item` and `rename_canvas`. Account, password, sharing and billing actions are deliberately not available to a connected AI. Every query is scoped to the signed-in user's own canvases. Writes go through the same validation and live sync as the app.
 
 Built on Cloudflare's `@cloudflare/workers-oauth-provider` and `agents` (`createMcpHandler`). `src/index.js` wraps the app with the provider; `src/mcp.js` has the consent screen and the tools. It needs the KV binding `OAUTH_KV` (one namespace, created once). Tokens are issued for `https://thinksl8.com/mcp`, so the connector only works on that address (set `MCP_RESOURCE` to test elsewhere, and run `wrangler dev` with `--local-upstream`). Approving again for the same app replaces its earlier grant. Test: `node test/mcp-test.mjs`.
+
+### Alerts (/alerts)
+
+When a connected AI adds or changes something on a canvas, ThinkSL8 can wake a Claude routine through its API trigger (paste the routine's fire URL and token; the token is sealed with `KEY_ENC_SECRET`) or email the owner (needs mail set up). Each alert can be limited to text containing given words (for example `TO: claude-ai`) and has a cooldown; writes inside the cooldown are sent by the next write or by the scheduled handler (`[triggers]` in `wrangler.toml`, every 5 minutes). The owner's own edits never trigger alerts. Code in `src/hooks.js`, table in `migrations/0009_canvas_hooks.sql`. Test: `node test/hooks-test.mjs` (needs `wrangler dev --test-scheduled`).
 
 ## Using it
 
