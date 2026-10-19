@@ -36,6 +36,13 @@ function buildServer(env, ctx, { userId, scopes = [] }) {
     return bottom === null ? 0 : bottom + 24;
   };
 
+  // The clock, for AI apps that can't read one (some sandboxes block every time source). Same answer for everyone; no user data.
+  s.registerTool('current_time', { description: 'The current date and time, in UTC and in Karachi time (PKT). Use it to timestamp entries when you have no clock of your own.' }, async () => {
+    const now = new Date();
+    const pkt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Karachi', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(now).replace(',', '');
+    return out({ utc: now.toISOString(), pkt: pkt + ' PKT', log_header_time: pkt + ' PKT' });
+  });
+
   s.registerTool('list_canvases', { description: "List the user's ThinkSL8 canvases, newest first." }, async () => {
     const { results } = await env.DB.prepare('SELECT id, title, updated_at FROM notes WHERE user_id = ? ORDER BY updated_at DESC LIMIT 100').bind(userId).all();
     return out(results.map((r) => ({ id: r.id, title: r.title, updated: new Date(r.updated_at).toISOString() })));
