@@ -5,6 +5,7 @@ import { McpServer } from '@modelcontextprotocol/server';
 import { createMcpHandler } from 'agents/mcp/server';
 import { z } from 'zod';
 import { currentUser, saveOps, saved, sniffVideo, sniffAudio, fileKey, MAX_FILES } from './worker.js';
+import { onAiWrite } from './hooks.js';
 
 const MAX_AUDIO = 2_000_000; // decoded bytes an AI may add or fetch in one call
 const out = (o) => ({ content: [{ type: 'text', text: typeof o === 'string' ? o : JSON.stringify(o) }] });
@@ -17,6 +18,8 @@ function buildServer(env, ctx, { userId, scopes = [] }) {
   const canWrite = scopes.includes('canvas:write');
   const s = new McpServer({ name: 'thinksl8', version: '1.0.0' });
   const save = async (noteId, ops) => (await saved(ctx, env, noteId, {}, saveOps(env, noteId, ops), ops)).ok;
+  // Canvas alerts (/alerts): run after the reply so a slow routine or mail call never delays the tool.
+  const alert = (noteId, ...texts) => ctx.waitUntil(onAiWrite(env, userId, noteId, texts.filter((t) => typeof t === 'string' && t)).catch(() => {}));
   // Where a new item goes when the AI gives no position: just below everything already on the canvas.
   const nextY = async (canvasId) => {
     const { results } = await env.DB.prepare("SELECT data FROM items WHERE note_id = ? AND json_extract(data, '$.kind') IN ('text', 'portal', 'voice')").bind(canvasId).all();
@@ -80,7 +83,9 @@ function buildServer(env, ctx, { userId, scopes = [] }) {
     const row = await env.DB.prepare('SELECT data FROM items WHERE note_id = ? AND id = ?').bind(canvas_id, item_id).first('data');
     const it = row && JSON.parse(row);
     if (it?.kind !== 'voice') return err('No such voice note.');
-    return (await save(canvas_id, [{ put: { ...it, text: transcript } }])) ? out('Transcript saved.') : err('Could not save the transcript.');
+    if (!(await save(canvas_id, [{ put: { ...it, text: transcript } }]))) return err('Could not save the transcript.');
+    alert(canvas_id, transcript);
+    return out('Transcript saved.');
   });
 
   s.registerTool('add_voice_note', { description: 'Add a voice note to a canvas from audio you have (WebM, MP4/M4A, Ogg, MP3 or WAV, base64, up to 2 MB), with an optional transcript. Needs write access.', inputSchema: { canvas_id: z.string(), audio_base64: z.string().max(2_800_000), transcript: z.string().max(40000).optional(), seconds: z.number().min(0).max(7200).optional(), x: z.number().optional(), y: z.number().optional() } }, async ({ canvas_id, audio_base64, transcript, seconds, x = 0, y = 0 }) => {
@@ -96,7 +101,9 @@ function buildServer(env, ctx, { userId, scopes = [] }) {
     const file = crypto.randomUUID();
     await env.FILES.put(fileKey(userId, file), bytes, { metadata: { type, size: bytes.length, at: Date.now() } });
     const item = { id: crypto.randomUUID(), kind: 'voice', t: Date.now(), file, x: Math.round(x), y: Math.round(y), w: 260, h: 52, ...(seconds != null && { dur: seconds }), ...(transcript && { text: transcript }) };
-    return (await save(canvas_id, [{ put: item }])) ? out({ added: item.id }) : err('Could not add the voice note.');
+    if (!(await save(canvas_id, [{ put: item }]))) return err('Could not add the voice note.');
+    alert(canvas_id, transcript, 'New voice note');
+    return out({ added: item.id });
   });
 
   s.registerTool('create_canvas', { description: 'Create a new, empty canvas with the given title and return its id. Needs write access.', inputSchema: { title: z.string().min(1).max(200) } }, async ({ title }) => {
@@ -112,14 +119,18 @@ function buildServer(env, ctx, { userId, scopes = [] }) {
     if (!canWrite) return err(NEED_WRITE);
     if (!(await owns(env, userId, canvas_id))) return err('No such canvas.');
     const item = { id: crypto.randomUUID(), kind: 'text', t: Date.now(), x: Math.round(x ?? 0), y: Math.round(y ?? await nextY(canvas_id)), w: 320, s: 17, c: 'ink', text };
-    return (await save(canvas_id, [{ put: item }])) ? out({ added: item.id }) : err('Could not add the note.');
+    if (!(await save(canvas_id, [{ put: item }]))) return err('Could not add the note.');
+    alert(canvas_id, text);
+    return out({ added: item.id });
   });
 
   s.registerTool('add_portal', { description: 'Add a portal card to a canvas that opens another of the user\'s canvases. Without x and y it lands below the existing items. Needs write access.', inputSchema: { canvas_id: z.string(), target_canvas_id: z.string(), x: z.number().optional(), y: z.number().optional() } }, async ({ canvas_id, target_canvas_id, x, y }) => {
     if (!canWrite) return err(NEED_WRITE);
     if (!(await owns(env, userId, canvas_id)) || !(await owns(env, userId, target_canvas_id))) return err('No such canvas.');
     const item = { id: crypto.randomUUID(), kind: 'portal', t: Date.now(), x: Math.round(x ?? 0), y: Math.round(y ?? await nextY(canvas_id)), w: 240, h: 132, target: target_canvas_id };
-    return (await save(canvas_id, [{ put: item }])) ? out({ added: item.id }) : err('Could not add the portal.');
+    if (!(await save(canvas_id, [{ put: item }]))) return err('Could not add the portal.');
+    alert(canvas_id, 'New portal on the canvas');
+    return out({ added: item.id });
   });
 
   // Editing and deleting need their own approval ("canvas:edit"), separate from adding.
@@ -135,7 +146,9 @@ function buildServer(env, ctx, { userId, scopes = [] }) {
     if (text === undefined && x === undefined && y === undefined) return err('Nothing to change.');
     if (text !== undefined && it.kind !== 'text') return err('Only typed notes have text. Use set_voice_transcript for voice notes.');
     const next = { ...it, ...(text !== undefined && { text }), ...(x !== undefined && { x: Math.round(x) }), ...(y !== undefined && { y: Math.round(y) }) };
-    return (await save(canvas_id, [{ put: next }])) ? out('Updated.') : err('Could not save the change.');
+    if (!(await save(canvas_id, [{ put: next }]))) return err('Could not save the change.');
+    alert(canvas_id, text, 'An item was moved');
+    return out('Updated.');
   });
 
   s.registerTool('delete_item', { description: 'Delete one typed note, portal or voice note from a canvas. Item ids come from read_canvas. Needs edit access.', inputSchema: { canvas_id: z.string(), item_id: z.string() } }, async ({ canvas_id, item_id }) => {
@@ -143,7 +156,9 @@ function buildServer(env, ctx, { userId, scopes = [] }) {
     if (!(await owns(env, userId, canvas_id))) return err('No such canvas.');
     const it = await itemOf(canvas_id, item_id);
     if (!it || !['text', 'portal', 'voice'].includes(it.kind)) return err('No such note, portal or voice note.');
-    return (await save(canvas_id, [{ del: item_id }])) ? out('Deleted.') : err('Could not delete it.');
+    if (!(await save(canvas_id, [{ del: item_id }]))) return err('Could not delete it.');
+    alert(canvas_id, 'An item was deleted');
+    return out('Deleted.');
   });
 
   s.registerTool('rename_canvas', { description: 'Change the title of a canvas. Needs edit access.', inputSchema: { canvas_id: z.string(), title: z.string().min(1).max(200) } }, async ({ canvas_id, title }) => {

@@ -26,17 +26,17 @@ const b64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf)));
 const unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
 const b64url = (buf) => b64(buf).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
-async function sealKey(env) {
+export async function sealKey(env) {
   const s = env.KEY_ENC_SECRET;
   if (!s || s.length < 32) return null; // refuse to store provider keys without a real secret
   return crypto.subtle.importKey('raw', await crypto.subtle.digest('SHA-256', enc.encode(s)), 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
-async function seal(key, userId, text) {
+export async function seal(key, userId, text) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv, additionalData: enc.encode(userId) }, key, enc.encode(text));
   return b64(iv) + '.' + b64(ct);
 }
-async function unseal(key, userId, sealed) {
+export async function unseal(key, userId, sealed) {
   const [iv, ct] = sealed.split('.').map(unb64);
   return dec.decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv, additionalData: enc.encode(userId) }, key, ct));
 }

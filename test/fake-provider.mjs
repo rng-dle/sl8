@@ -8,6 +8,7 @@ const PORT = Number(process.env.PORT || 8788);
 const challenges = new Map(); // code -> code_challenge
 const revokedKeys = new Set(); // keys revoked "on the provider's side" after connecting
 const emails = [];
+const fires = [];
 const b64url = (b) => b.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
 const keyOf = (req) => (req.headers.authorization || '').replace(/^Bearer /, '') || req.headers['x-api-key'] || '';
@@ -51,6 +52,13 @@ createServer(async (req, res) => {
   // stand-in for Resend: keep emails so tests can read the reset link
   if (url.pathname === '/resend/emails' && req.method === 'POST') { const m = await readBody(req); m.at = Date.now(); emails.push(m); return send(res, 200, { id: randomUUID() }); }
   if (url.pathname === '/__emails') return send(res, 200, emails.filter((m) => m.to.includes(url.searchParams.get('to'))));
+  // Claude Code routine API triggers (canvas alerts): record each fire.
+  if (p === 'routines' && req.method === 'POST' && path.endsWith('/fire')) {
+    if (req.headers['anthropic-version'] !== '2023-06-01') return send(res, 400, { type: 'error', error: { type: 'invalid_request_error', message: 'anthropic-version' } });
+    fires.push({ id: rest[0], auth: req.headers.authorization || '', body: await readBody(req), at: Date.now() });
+    return send(res, 200, { type: 'routine_fire', claude_code_session_id: 'session_test', claude_code_session_url: 'https://claude.ai/code/session_test' });
+  }
+  if (url.pathname === '/__fires') return send(res, 200, fires.filter((f) => f.id === url.searchParams.get('id')));
   if (key.includes('revoked') || revokedKeys.has(key)) return send(res, 401, { error: { message: 'Key revoked' } });
   if (key.includes('bad')) return send(res, 401, { error: { message: 'Invalid key' } });
   if (path === '/models' && req.method === 'GET') return send(res, 200, { data: MODELS[p] || [] });
