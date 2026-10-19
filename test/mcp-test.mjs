@@ -64,7 +64,7 @@ const init = await rpc(ro.token, 'initialize', { protocolVersion: '2025-06-18', 
 ok(init.status === 200 && init.data?.result?.serverInfo?.name === 'thinksl8', 'MCP initialize works', JSON.stringify(init.data));
 const list = await rpc(ro.token, 'tools/list', {});
 const names = (list.data?.result?.tools || []).map((t) => t.name).sort().join(',');
-ok(names === 'add_note,add_voice_note,get_voice_note,list_canvases,read_canvas,search,set_voice_transcript', 'the seven tools are listed', names);
+ok(names === 'add_note,add_voice_note,create_canvas,get_voice_note,list_canvases,read_canvas,search,set_voice_transcript', 'the eight tools are listed', names);
 
 let r = await call(ro.token, 'list_canvases', {});
 ok(!r.isError && r.text.includes('Plans') && !r.text.includes('Bobs secret'), 'list_canvases shows only your canvases', r.text);
@@ -76,6 +76,8 @@ r = await call(ro.token, 'search', { query: 'launch' });
 ok(r.text.includes('Book the venue') && !r.text.includes('hunter2'), 'search finds your notes and never anyone elses', r.text);
 r = await call(ro.token, 'add_voice_note', { canvas_id: note.id, audio_base64: Buffer.from([0x1a, 0x45, 0xdf, 0xa3, ...new Array(40).fill(1)]).toString('base64') });
 ok(r.isError && /read-only/.test(r.text), 'a read-only connection cannot add recordings', r.text);
+r = await call(ro.token, 'create_canvas', { title: 'Should not exist' });
+ok(r.isError && /read-only/.test(r.text), 'a read-only connection cannot create canvases', r.text);
 r = await call(ro.token, 'add_note', { canvas_id: note.id, text: 'should not land' });
 ok(r.isError && /read-only/.test(r.text), 'a read-only connection cannot add typed notes', r.text);
 
@@ -94,6 +96,17 @@ ok(mine?.kind === 'voice' && mine.text === 'Call the caterer on Monday' && mine.
 const file = await fetch(`${B}/api/files/${mine.file}`, { headers: { cookie: alice.cookie() } });
 ok(file.status === 200 && file.headers.get('content-type') === 'video/webm', 'and its audio plays from the normal file route');
 
+r = await call(rw.token, 'create_canvas', { title: '  Claude Bridge Log  ' });
+ok(!r.isError && JSON.parse(r.text).title === 'Claude Bridge Log', 'a write connection can create a canvas', r.text);
+const madeId = JSON.parse(r.text).id;
+r = await call(rw.token, 'list_canvases', {});
+ok(r.text.includes(madeId), 'the new canvas appears in list_canvases', r.text);
+r = await call(bobTok.token, 'read_canvas', { canvas_id: madeId });
+ok(r.isError, "someone else's token can't read the new canvas");
+r = await call(rw.token, 'add_note', { canvas_id: madeId, text: 'first entry in a fresh canvas' });
+ok(!r.isError, 'a note can be added to a canvas the connector created', r.text);
+r = await call(rw.token, 'create_canvas', { title: '' });
+ok(r.isError, 'an empty title is refused');
 r = await call(rw.token, 'add_note', { canvas_id: note.id, text: '[ID 0001] hello from the other Claude\nsecond line' });
 ok(!r.isError && r.text.includes('added'), 'a write connection can add a typed note', r.text);
 const noteId = JSON.parse(r.text).added;

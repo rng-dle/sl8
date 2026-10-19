@@ -1,5 +1,5 @@
 // The ThinkSL8 MCP connector: lets a user's own AI (Claude and others) read their canvases and voice notes, and, if they allow it, add
-// typed notes, recordings and transcripts. Built on Cloudflare's workers-oauth-provider (OAuth 2.1, MIT) and agents' createMcpHandler (stateless).
+// canvases, typed notes, recordings and transcripts. Built on Cloudflare's workers-oauth-provider (OAuth 2.1, MIT) and agents' createMcpHandler (stateless).
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { McpServer } from '@modelcontextprotocol/server';
 import { createMcpHandler } from 'agents/mcp/server';
@@ -84,6 +84,15 @@ function buildServer(env, ctx, { userId, scopes = [] }) {
     return (await save(canvas_id, [{ put: item }])) ? out({ added: item.id }) : err('Could not add the voice note.');
   });
 
+  s.registerTool('create_canvas', { description: 'Create a new, empty canvas with the given title and return its id. Needs write access.', inputSchema: { title: z.string().min(1).max(200) } }, async ({ title }) => {
+    if (!canWrite) return err(NEED_WRITE);
+    const count = await env.DB.prepare('SELECT COUNT(*) AS n FROM notes WHERE user_id = ?').bind(userId).first('n');
+    if (count >= 500) return err('The user already has 500 canvases.');
+    const id = crypto.randomUUID(), now = Date.now(), clean = title.trim().slice(0, 200) || 'Untitled';
+    await env.DB.prepare('INSERT INTO notes VALUES (?, ?, ?, ?, ?)').bind(id, userId, clean, now, now).run();
+    return out({ id, title: clean });
+  });
+
   s.registerTool('add_note', { description: 'Add a typed text note to a canvas. Without x and y it lands below the existing notes. Needs write access.', inputSchema: { canvas_id: z.string(), text: z.string().min(1).max(40000), x: z.number().optional(), y: z.number().optional() } }, async ({ canvas_id, text, x, y }) => {
     if (!canWrite) return err(NEED_WRITE);
     if (!(await owns(env, userId, canvas_id))) return err('No such canvas.');
@@ -130,7 +139,7 @@ export async function authorize(req, env) {
   if (req.method === 'GET') {
     return page(`<h1>Connect ${esc(client?.clientName || 'an app')} to ThinkSL8?</h1><p>Signed in as ${esc(user.email)}. This lets the app read your canvases, typed notes and voice notes (with transcripts). It never sees your password and you can stop it by deleting the connection in the app.</p>
 <form method="post" action="/authorize"><input type="hidden" name="q" value="${esc(url.search)}">
-<label><input type="checkbox" name="write" value="1"> Also allow adding typed notes, voice notes and transcripts</label>
+<label><input type="checkbox" name="write" value="1"> Also allow creating canvases and adding typed notes, voice notes and transcripts</label>
 <button class="go" name="decision" value="allow">Allow</button> <button name="decision" value="deny">Cancel</button></form>`);
   }
   if (req.method !== 'POST' || req.headers.get('origin') !== url.origin) return page('<h1>Not allowed</h1>', 403);
