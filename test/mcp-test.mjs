@@ -64,7 +64,7 @@ const init = await rpc(ro.token, 'initialize', { protocolVersion: '2025-06-18', 
 ok(init.status === 200 && init.data?.result?.serverInfo?.name === 'thinksl8', 'MCP initialize works', JSON.stringify(init.data));
 const list = await rpc(ro.token, 'tools/list', {});
 const names = (list.data?.result?.tools || []).map((t) => t.name).sort().join(',');
-ok(names === 'add_voice_note,get_voice_note,list_canvases,read_canvas,search,set_voice_transcript', 'the six tools are listed', names);
+ok(names === 'add_note,add_voice_note,get_voice_note,list_canvases,read_canvas,search,set_voice_transcript', 'the seven tools are listed', names);
 
 let r = await call(ro.token, 'list_canvases', {});
 ok(!r.isError && r.text.includes('Plans') && !r.text.includes('Bobs secret'), 'list_canvases shows only your canvases', r.text);
@@ -76,6 +76,8 @@ r = await call(ro.token, 'search', { query: 'launch' });
 ok(r.text.includes('Book the venue') && !r.text.includes('hunter2'), 'search finds your notes and never anyone elses', r.text);
 r = await call(ro.token, 'add_voice_note', { canvas_id: note.id, audio_base64: Buffer.from([0x1a, 0x45, 0xdf, 0xa3, ...new Array(40).fill(1)]).toString('base64') });
 ok(r.isError && /read-only/.test(r.text), 'a read-only connection cannot add recordings', r.text);
+r = await call(ro.token, 'add_note', { canvas_id: note.id, text: 'should not land' });
+ok(r.isError && /read-only/.test(r.text), 'a read-only connection cannot add typed notes', r.text);
 
 const rw = await connect(alice, true); // approving again replaces the earlier grant for this app, so the read-only checks come first
 ok(rw.token, 'a connection with write access can be approved', rw.error);
@@ -91,6 +93,21 @@ const mine = (await alice.json(`/api/notes/${note.id}`)).body.items.find((i) => 
 ok(mine?.kind === 'voice' && mine.text === 'Call the caterer on Monday' && mine.dur === 4.2, 'the recording shows up on the canvas');
 const file = await fetch(`${B}/api/files/${mine.file}`, { headers: { cookie: alice.cookie() } });
 ok(file.status === 200 && file.headers.get('content-type') === 'video/webm', 'and its audio plays from the normal file route');
+
+r = await call(rw.token, 'add_note', { canvas_id: note.id, text: '[ID 0001] hello from the other Claude\nsecond line' });
+ok(!r.isError && r.text.includes('added'), 'a write connection can add a typed note', r.text);
+const noteId = JSON.parse(r.text).added;
+const typed = (await alice.json(`/api/notes/${note.id}`)).body.items.find((i) => i.id === noteId);
+ok(typed?.kind === 'text' && typed.text.startsWith('[ID 0001]') && typed.y > 0, 'the typed note lands below the existing notes', JSON.stringify(typed));
+r = await call(rw.token, 'add_note', { canvas_id: note.id, text: 'placed here', x: 500, y: 40 });
+const placed = (await alice.json(`/api/notes/${note.id}`)).body.items.find((i) => i.id === JSON.parse(r.text).added);
+ok(placed?.x === 500 && placed?.y === 40, 'a typed note can be placed at x and y', r.text);
+r = await call(rw.token, 'read_canvas', { canvas_id: note.id });
+ok(r.text.includes('hello from the other Claude'), 'read_canvas returns the note that was added');
+r = await call(rw.token, 'add_note', { canvas_id: bobNote.id, text: 'intruder' });
+ok(r.isError, "cannot add a typed note to someone else's canvas");
+r = await call(rw.token, 'add_note', { canvas_id: note.id, text: '' });
+ok(r.isError, 'an empty note is refused');
 
 r = await call(rw.token, 'set_voice_transcript', { canvas_id: note.id, item_id: added, transcript: 'Call the caterer on Tuesday' });
 ok(!r.isError, 'a transcript can be replaced', r.text);

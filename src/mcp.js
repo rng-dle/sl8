@@ -1,5 +1,5 @@
 // The ThinkSL8 MCP connector: lets a user's own AI (Claude and others) read their canvases and voice notes, and, if they allow it, add
-// recordings and transcripts. Built on Cloudflare's workers-oauth-provider (OAuth 2.1, MIT) and agents' createMcpHandler (stateless).
+// typed notes, recordings and transcripts. Built on Cloudflare's workers-oauth-provider (OAuth 2.1, MIT) and agents' createMcpHandler (stateless).
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { McpServer } from '@modelcontextprotocol/server';
 import { createMcpHandler } from 'agents/mcp/server';
@@ -83,6 +83,25 @@ function buildServer(env, ctx, { userId, scopes = [] }) {
     const item = { id: crypto.randomUUID(), kind: 'voice', t: Date.now(), file, x: Math.round(x), y: Math.round(y), w: 260, h: 52, ...(seconds != null && { dur: seconds }), ...(transcript && { text: transcript }) };
     return (await save(canvas_id, [{ put: item }])) ? out({ added: item.id }) : err('Could not add the voice note.');
   });
+
+  s.registerTool('add_note', { description: 'Add a typed text note to a canvas. Without x and y it lands below the existing notes. Needs write access.', inputSchema: { canvas_id: z.string(), text: z.string().min(1).max(40000), x: z.number().optional(), y: z.number().optional() } }, async ({ canvas_id, text, x, y }) => {
+    if (!canWrite) return err(NEED_WRITE);
+    if (!(await owns(env, userId, canvas_id))) return err('No such canvas.');
+    const W = 320, S = 17;
+    if (y === undefined) {
+      const { results } = await env.DB.prepare("SELECT data FROM items WHERE note_id = ? AND json_extract(data, '$.kind') = 'text'").bind(canvas_id).all();
+      let bottom = null;
+      for (const r of results) {
+        const it = JSON.parse(r.data);
+        const w = it.w || W, s = it.s || S, lines = String(it.text || '').split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / Math.max(8, w / (s * 0.55)))), 0);
+        const b = (it.y || 0) + lines * s * 1.4;
+        if (bottom === null || b > bottom) bottom = b;
+      }
+      y = bottom === null ? 0 : bottom + 24;
+    }
+    const item = { id: crypto.randomUUID(), kind: 'text', t: Date.now(), x: Math.round(x ?? 0), y: Math.round(y), w: W, s: S, c: 'ink', text };
+    return (await save(canvas_id, [{ put: item }])) ? out({ added: item.id }) : err('Could not add the note.');
+  });
   return s;
 }
 
@@ -111,7 +130,7 @@ export async function authorize(req, env) {
   if (req.method === 'GET') {
     return page(`<h1>Connect ${esc(client?.clientName || 'an app')} to ThinkSL8?</h1><p>Signed in as ${esc(user.email)}. This lets the app read your canvases, typed notes and voice notes (with transcripts). It never sees your password and you can stop it by deleting the connection in the app.</p>
 <form method="post" action="/authorize"><input type="hidden" name="q" value="${esc(url.search)}">
-<label><input type="checkbox" name="write" value="1"> Also allow adding voice notes and transcripts</label>
+<label><input type="checkbox" name="write" value="1"> Also allow adding typed notes, voice notes and transcripts</label>
 <button class="go" name="decision" value="allow">Allow</button> <button name="decision" value="deny">Cancel</button></form>`);
   }
   if (req.method !== 'POST' || req.headers.get('origin') !== url.origin) return page('<h1>Not allowed</h1>', 403);
