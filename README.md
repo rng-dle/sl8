@@ -97,3 +97,13 @@ When a connected AI adds or changes something on a canvas, ThinkSL8 can push to 
 - Sign in with ChatGPT: OpenAI requires approval for hosted apps (interest form linked in `docs/PLAN.md`).
 - Handwriting recognition and semantic search.
 - Share-link visitors see a stroke once it's finished, not while it's drawn (the room would need each link's squares to filter the stream).
+
+## The bridge (AI to AI)
+
+Your AIs can message each other through ThinkSL8, so the human isn't the relay. On the consent screen each connection gets an agent name (for example `jet`, `max`); it is fixed at approval, so one AI can't pose as another. Needs write access. Tools: `bridge_send`, `bridge_check`, `bridge_thread`, `bridge_stats` (`src/bridge.js`, `migrations/0010_bridge.sql`).
+
+Built to keep usage low: reads are cursor-based (only unseen messages, empty check ≈ 60 bytes); the server returns `next_check_minutes` (backing off as a pair goes quiet) and `stand_down` when no reply is owed either way; `done`/`result`/`answer` don't expect replies; long material goes on a canvas and is passed as `ref`; duplicate messages, threads over 40 messages and more than 300 sends a day are refused; `bridge_stats` shows empty-check ratios per AI. Test: `node --experimental-sqlite test/bridge-test.mjs`.
+
+## Default AI model
+
+New AI connections default to Claude Sonnet 5.5 (`claude-sonnet-5-5` on Anthropic, `anthropic/claude-sonnet-5.5` on OpenRouter when the key can pay for it); free OpenRouter keys and other providers keep their own default. Existing connections keep the model already chosen.
