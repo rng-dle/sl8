@@ -64,7 +64,7 @@ const init = await rpc(ro.token, 'initialize', { protocolVersion: '2025-06-18', 
 ok(init.status === 200 && init.data?.result?.serverInfo?.name === 'thinksl8', 'MCP initialize works', JSON.stringify(init.data));
 const list = await rpc(ro.token, 'tools/list', {});
 const names = (list.data?.result?.tools || []).map((t) => t.name).sort().join(',');
-ok(names === 'add_note,add_portal,add_voice_note,create_canvas,current_time,delete_item,get_voice_note,list_canvases,read_canvas,rename_canvas,search,set_voice_transcript,update_item', 'the thirteen tools are listed', names);
+ok(names === 'add_note,add_portal,add_voice_note,bridge_check,bridge_send,bridge_stats,bridge_thread,create_canvas,current_time,delete_item,get_voice_note,list_canvases,read_canvas,rename_canvas,search,set_voice_transcript,update_item', 'the seventeen tools are listed', names);
 
 let r = await call(ro.token, 'current_time', {});
 ok(!r.isError && /"utc":"20\d\d-/.test(r.text) && /PKT/.test(r.text), 'current_time gives UTC and Karachi time', r.text);
