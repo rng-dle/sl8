@@ -6,10 +6,10 @@ One Cloudflare Worker (`sl8`): static pages in `public/` (served directly), API 
 
 ## Deploy
 
-Pushes to `main` deploy through Cloudflare Workers Builds (Workers & Pages → `sl8` → Settings → Builds, repo `rng-dle/sl8`). Builds don't run database migrations: apply new files in `migrations/` first (they're written to be safe for the code already running). By hand, with Node 18+:
+Pushes to `main` deploy through Cloudflare Workers Builds (Workers & Pages → `sl8` → Settings → Builds, repo `rng-dle/sl8`). Set the build's **deploy command** to `npm run deploy`: it applies pending files in `migrations/` to the production database and then deploys, so code never goes live ahead of its tables (that gap took the bridge down on 19 Oct 2026, when `0010_bridge.sql` was merged but never applied). With the default `npx wrangler deploy` the build does not run migrations, so apply them first. By hand, with Node 18+:
 
 ```
-npm install && npx wrangler login && npx wrangler d1 migrations apply sl8-db --remote && npx wrangler deploy
+npm install && npx wrangler login && npm run deploy
 ```
 
 AI connections need one secret, `KEY_ENC_SECRET` (any random string of 32+ characters), which encrypts users' provider keys. Set it in the dashboard (`sl8` → Settings → Variables and Secrets) or with `npx wrangler secret put KEY_ENC_SECRET`. Without it the app works and AI shows as unavailable. Changing it later disconnects everyone's AI, so set it once.
