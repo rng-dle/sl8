@@ -31,7 +31,9 @@ export function nextCheck({ unread, openForMe, openForThem, idleMs }) {
   return { next_check_minutes: m };
 }
 
-export function registerBridge(s, env, { userId, scopes = [], agent }) {
+// wake(agent, text): ping the recipient (its inbox alerts: a Claude routine, a phone push, email). mirror(text): append to the
+// owner's "Claude Bridge Log" canvas so humans can follow along; neither costs any AI tokens.
+export function registerBridge(s, env, { userId, scopes = [], agent }, { wake = () => {}, mirror = () => {} } = {}) {
   const gate = () => {
     if (!scopes.includes('canvas:write')) return 'The bridge needs write access. Reconnect ThinkSL8 and tick "allow adding".';
     if (!agent) return 'This connection has no agent name. Reconnect ThinkSL8 and enter a name for this AI (for example jet or max).';
@@ -53,27 +55,44 @@ export function registerBridge(s, env, { userId, scopes = [], agent }) {
   };
 
   s.registerTool('bridge_send', {
-    description: 'Send a message to another of the user\'s AIs (by its agent name, e.g. "max"). Use kind "task" or "question" when you need a reply, "result" or "answer" to respond, "done" to close a thread (no reply is expected, so it costs the other AI nothing). Keep bodies short; put long material on a canvas and pass its id as ref. Reuse "thread" to continue a conversation. Needs write access.',
-    inputSchema: { to: z.string().min(2).max(24), body: z.string().min(1).max(MAX_BODY), kind: z.enum(KINDS).optional(), thread: z.string().min(1).max(64).optional(), ref: z.string().max(300).optional(), needs_reply: z.boolean().optional() },
+    description: 'Send a message to other agents by name: another AI (e.g. "max") or a human ("josh" reaches Josh\'s phone). Several names separated by commas reach each of them. The recipient is woken automatically if its owner set that up, so never ask a human to relay. Use kind "task" or "question" when you need a reply, "result" or "answer" to respond, "done" to close a thread (no reply expected, so it costs the other side nothing). Keep bodies short; put long material on a canvas and pass its id as ref. Reuse "thread" to continue a conversation. Needs write access.',
+    inputSchema: { to: z.string().min(2).max(130), body: z.string().min(1).max(MAX_BODY), kind: z.enum(KINDS).optional(), thread: z.string().min(1).max(64).optional(), ref: z.string().max(300).optional(), needs_reply: z.boolean().optional() },
   }, async ({ to, body, kind = 'note', thread, ref, needs_reply }) => {
     const g = gate(); if (g) return err(g);
-    const target = cleanHandle(to);
-    if (!target || target === agent) return err('Address the message to a different AI by its agent name.');
+    const targets = [...new Set(String(to).split(',').map(cleanHandle))];
+    if (!targets.length || targets.length > 5 || targets.some((t) => !t || t === agent)) return err('Address the message to up to 5 other agents by name, separated by commas.');
     const t = thread || crypto.randomUUID().slice(0, 8);
     const now = Date.now();
     const sent = await env.DB.prepare('SELECT COALESCE(sends, 0) AS n FROM bridge_usage WHERE user_id = ? AND agent = ? AND day = ?').bind(userId, agent, day()).first('n');
-    if ((sent ?? 0) >= DAILY_SEND_CAP) return err(`Daily bridge cap (${DAILY_SEND_CAP} messages) reached. Ask the human before sending more.`);
+    if ((sent ?? 0) + targets.length > DAILY_SEND_CAP) return err(`Daily bridge cap (${DAILY_SEND_CAP} messages) reached. Ask the human before sending more.`);
     const { n: count, dup } = await env.DB.prepare(
       'SELECT COUNT(*) AS n, SUM(from_agent = ? AND body = ? AND created_at > ?) AS dup FROM bridge_messages WHERE user_id = ? AND thread = ?'
     ).bind(agent, body, now - DUPLICATE_WINDOW, userId, t).first();
     if (dup) return err('You already sent this exact message in this thread a moment ago. Wait for a reply instead of repeating it.');
-    if (count >= THREAD_CAP) return err(`This thread has ${THREAD_CAP} messages. Stop and summarise for the human, or start a new thread with a short summary as the first message.`);
+    if (count + targets.length > THREAD_CAP) return err(`This thread has reached ${THREAD_CAP} messages. Stop and summarise for the human (to "josh"), or start a new thread with a short summary as the first message.`);
     const reply = needs_reply ?? NEEDS_REPLY.has(kind);
-    const id = (await env.DB.prepare(
-      'INSERT INTO bridge_messages (user_id, thread, from_agent, to_agent, kind, body, ref, needs_reply, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id'
-    ).bind(userId, t, agent, target, kind, body, ref ?? null, reply ? 1 : 0, now).first('id'));
-    await usage({ sends: 1, cout: body.length }).run();
-    return out({ sent: id, thread: t, to: target, needs_reply: reply });
+    const ids = [];
+    for (const target of targets) {
+      ids.push(await env.DB.prepare(
+        'INSERT INTO bridge_messages (user_id, thread, from_agent, to_agent, kind, body, ref, needs_reply, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id'
+      ).bind(userId, t, agent, target, kind, body, ref ?? null, reply ? 1 : 0, now).first('id'));
+    }
+    await usage({ sends: targets.length, cout: body.length * targets.length }).run();
+    const head = `${agent} → ${targets.join(', ')} · ${kind}${reply ? ' (reply expected)' : ''} · thread ${t}`;
+    for (const target of targets) wake(target, `${head}: ${body.split('\n')[0].slice(0, 160)}`);
+    mirror(`## ${head}\n${body}${ref ? `\nRef: ${ref}` : ''}`);
+    return out({ sent: ids.length === 1 ? ids[0] : ids, thread: t, to: targets, needs_reply: reply });
+  });
+
+  s.registerTool('bridge_agents', {
+    description: 'Who is on the bridge: every agent name that has sent or received messages, when each was last active, and how many replies each still owes. Use it to pick who to delegate to; it is cheap.',
+  }, async () => {
+    const g = gate(); if (g) return err(g);
+    const { results } = await env.DB.prepare(
+      `SELECT a AS agent, MAX(t) AS last FROM (SELECT from_agent AS a, created_at AS t FROM bridge_messages WHERE user_id = ? UNION ALL SELECT to_agent, created_at FROM bridge_messages WHERE user_id = ?) GROUP BY a ORDER BY last DESC LIMIT 50`
+    ).bind(userId, userId).all();
+    const rows = await Promise.all(results.map(async (r) => ({ agent: r.agent, last_active: new Date(r.last).toISOString(), owes_replies: await open(r.agent, 'to'), ...(r.agent === agent && { you: true }) })));
+    return out(rows.length ? rows : [{ agent, you: true, note: 'No messages yet. Send one with bridge_send.' }]);
   });
 
   s.registerTool('bridge_check', {

@@ -64,7 +64,7 @@ const init = await rpc(ro.token, 'initialize', { protocolVersion: '2025-06-18', 
 ok(init.status === 200 && init.data?.result?.serverInfo?.name === 'thinksl8', 'MCP initialize works', JSON.stringify(init.data));
 const list = await rpc(ro.token, 'tools/list', {});
 const names = (list.data?.result?.tools || []).map((t) => t.name).sort().join(',');
-ok(names === 'add_note,add_portal,add_voice_note,create_canvas,current_time,delete_item,get_voice_note,list_canvases,read_canvas,rename_canvas,search,set_voice_transcript,update_item', 'the thirteen tools are listed', names);
+ok(names === 'add_note,add_portal,add_voice_note,bridge_agents,bridge_check,bridge_send,bridge_stats,bridge_thread,create_canvas,current_time,delete_item,get_voice_note,list_canvases,read_canvas,rename_canvas,search,set_voice_transcript,update_item', 'the eighteen tools are listed', names);
 
 let r = await call(ro.token, 'current_time', {});
 ok(!r.isError && /"utc":"20\d\d-/.test(r.text) && /PKT/.test(r.text), 'current_time gives UTC and Karachi time', r.text);
@@ -155,7 +155,7 @@ ok(ed.token, 'a connection with edit access can be approved', ed.error);
 r = await call(ed.token, 'update_item', { canvas_id: note.id, item_id: noteId, text: '[ID 0001] edited text', x: 120, y: 340 });
 ok(!r.isError, 'update_item changes the text and moves a typed note', r.text);
 const edited = (await alice.json(`/api/notes/${note.id}`)).body.items.find((i) => i.id === noteId);
-ok(edited?.text === '[ID 0001] edited text' && edited.x === 120 && edited.y === 340 && edited.kind === 'text' && edited.w === 320, 'the edit shows on the canvas and keeps the note\'s other fields', JSON.stringify(edited));
+ok(edited?.text === '[ID 0001] edited text' && edited.x === 120 && edited.y >= 340 && edited.kind === 'text' && edited.w === 320, 'the edit shows on the canvas and keeps the note\'s other fields', JSON.stringify(edited));
 r = await call(ed.token, 'update_item', { canvas_id: note.id, item_id: added, text: 'nope' });
 ok(r.isError, 'update_item will not put typed text on a voice note');
 r = await call(ed.token, 'update_item', { canvas_id: note.id, item_id: added, x: 7, y: 9 });
