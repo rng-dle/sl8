@@ -51,7 +51,7 @@ async function fire(env, hook, summary) {
         headers,
         body: JSON.stringify({ topic: hook.url.slice(at + 1), title: `ThinkSL8 · ${title}`.slice(0, 120), message: summary, click: link, tags: ['speech_balloon'] }),
       });
-      status = res.ok ? 'pushed to your phone' : `ntfy returned ${res.status}${res.status === 429 ? ' (rate limited: add an ntfy access token to this alert)' : res.status === 401 || res.status === 403 ? ' (token not accepted)' : ''}`;
+      status = res.ok ? 'pushed to your phone' : `ntfy returned ${res.status}${hook.secret ? ' with token' : ''}: ${(await res.text()).replace(/\s+/g, ' ').slice(0, 140)}`;
     } else {
       if (!canSendMail(env)) throw new Error("email isn't set up on this server yet");
       const user = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(hook.user_id).first();
