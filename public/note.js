@@ -533,7 +533,7 @@ function apply(id, item, save = true) {
   if (item?.kind !== 'stroke' && (connCount || item?.kind === 'conn' || prev?.kind === 'conn' || isMedia(item) || isMedia(prev))) schedule(true);
   updateHint();
 }
-const renderDom = (it) => (it.kind === 'text' ? renderText(it) : it.kind === 'portal' ? renderPortal(it) : it.kind === 'embed' ? renderEmbed(it) : it.kind === 'voice' ? renderVoice(it) : null);
+const renderDom = (it) => (it.kind === 'text' ? renderText(it) : it.kind === 'portal' ? renderPortal(it) : it.kind === 'embed' ? renderEmbed(it) : it.kind === 'voice' ? renderVoice(it) : it.kind === 'table' ? renderTable(it) : null);
 // arrows attached to any of these items
 const connsOf = (ids) => [...items.values()].filter((it) => it.kind === 'conn' && (ids.has(it.a) || ids.has(it.b)));
 function commit(changes) {
@@ -1007,6 +1007,136 @@ function renderPortal(it) {
   el.querySelector('.portal-title').textContent = title ?? (shareToken ? 'Not shared in this link' : 'This canvas was deleted');
   el.querySelector('.portal-open').setAttribute('aria-label', `Open ${title}`);
 }
+/* ---------- tables ---------- */
+// A grid of text cells. Tap twice to edit; Tab and Enter move between cells; pasting rows from a spreadsheet fills the grid.
+const TBL_COL = 160, TBL_MAX_ROWS = 100, TBL_MAX_COLS = 20;
+const tblRows = (it) => (Array.isArray(it.rows) && it.rows.length ? it.rows : [['']]);
+const tblSquare = (rows) => { const n = Math.min(TBL_MAX_COLS, Math.max(1, ...rows.map((r) => r.length))); return rows.slice(0, TBL_MAX_ROWS).map((r) => Array.from({ length: n }, (_, i) => String(r[i] ?? ''))); };
+function makeTableEl(id) {
+  const el = document.createElement('div');
+  el.className = 'tbl';
+  el.innerHTML = '<div class="tbl-bar"><button type="button" data-a="row">+ Row</button><button type="button" data-a="col">+ Col</button><button type="button" data-a="delrow">Del row</button><button type="button" data-a="delcol">Del col</button><button type="button" data-a="done">Done</button></div><div class="tbl-wrap"><table></table></div>';
+  textsEl.append(el);
+  textEls.set(id, el);
+  el._pos = [0, 0];
+  const flush = () => { // typing so far becomes its own undo step
+    const cur = items.get(id);
+    if (el._before && cur && JSON.stringify(el._before.rows) !== JSON.stringify(cur.rows)) { undoStack.push([{ id, before: el._before, after: cur }]); redoStack = []; updateUndo(); }
+    el._before = null;
+  };
+  const change = (fn, focus) => { // one undoable change to the grid
+    const cur = items.get(id);
+    if (!cur) return;
+    flush();
+    const rows = tblRows(cur).map((r) => [...r]);
+    fn(rows);
+    const sq = tblSquare(rows);
+    el._force = true;
+    if (focus) el._focus = focus;
+    commit([{ id, before: cur, after: { ...cur, rows: sq, w: sq[0].length * TBL_COL } }]);
+  };
+  const focusCell = (r, c) => el.querySelector(`textarea[data-r="${r}"][data-c="${c}"]`)?.focus();
+  el._change = change;
+  el.querySelector('.tbl-bar').addEventListener('pointerdown', (e) => e.preventDefault());
+  el.querySelector('.tbl-bar').addEventListener('click', (e) => {
+    const a = e.target.closest('button')?.dataset.a;
+    const cur = items.get(id);
+    if (!a || !cur) return;
+    const [r, c] = el._pos, rows = tblRows(cur);
+    if (a === 'done') { el.classList.remove('live'); document.activeElement?.blur?.(); return; }
+    if (a === 'row') { if (rows.length >= TBL_MAX_ROWS) return toast('That is as many rows as one table holds.'); change((x) => x.splice(r + 1, 0, new Array(x[0].length).fill('')), [r + 1, c]); }
+    if (a === 'col') { if (rows[0].length >= TBL_MAX_COLS) return toast('That is as many columns as one table holds.'); change((x) => x.forEach((row) => row.splice(c + 1, 0, '')), [r, c + 1]); }
+    if (a === 'delrow') { if (rows.length < 2) return; change((x) => x.splice(r, 1), [Math.min(r, rows.length - 2), c]); }
+    if (a === 'delcol') { if (rows[0].length < 2) return; change((x) => x.forEach((row) => row.splice(c, 1)), [r, Math.min(c, rows[0].length - 2)]); }
+  });
+  // typing: update the item as you go, and make one undo step when focus leaves the table
+  el.addEventListener('focusin', (e) => { const ta = e.target.closest?.('textarea'); if (!ta) return; el._pos = [+ta.dataset.r, +ta.dataset.c]; el._before ||= items.get(id); });
+  el.addEventListener('focusout', (e) => {
+    if (el.contains(e.relatedTarget)) return;
+    const cur = items.get(id);
+    flush();
+    if (cur && el._key !== JSON.stringify(tblRows(cur))) renderTable(cur); // catch up with a change that arrived while you were typing
+  });
+  el.addEventListener('input', (e) => {
+    const ta = e.target.closest?.('textarea'), cur = items.get(id);
+    if (!ta || !cur) return;
+    const rows = tblRows(cur).map((r) => [...r]);
+    rows[+ta.dataset.r][+ta.dataset.c] = ta.value.slice(0, 2000);
+    el._key = JSON.stringify(rows);
+    apply(id, { ...cur, rows });
+    autosize(ta);
+  });
+  el.addEventListener('keydown', (e) => {
+    const ta = e.target.closest?.('textarea');
+    if (!ta) return;
+    e.stopPropagation();
+    const cur = items.get(id), rows = tblRows(cur || {}), r = +ta.dataset.r, c = +ta.dataset.c, n = rows[0].length;
+    if (e.key === 'Escape') { el.classList.remove('live'); ta.blur(); return; }
+    if (e.key === 'Enter' && !e.shiftKey) { // down one cell; a new row at the bottom
+      e.preventDefault();
+      if (r + 1 < rows.length) focusCell(r + 1, c);
+      else if (rows.length < TBL_MAX_ROWS) change((x) => x.push(new Array(n).fill('')), [r + 1, c]);
+    } else if (e.key === 'Tab') {
+      e.preventDefault();
+      const k = r * n + c + (e.shiftKey ? -1 : 1);
+      if (k < 0) return;
+      if (k < rows.length * n) focusCell(Math.floor(k / n), k % n);
+      else if (rows.length < TBL_MAX_ROWS) change((x) => x.push(new Array(n).fill('')), [rows.length, 0]);
+    }
+  });
+  el.addEventListener('paste', (e) => { // rows copied from a spreadsheet or another table
+    const ta = e.target.closest?.('textarea');
+    const text = ta && e.clipboardData?.getData('text');
+    if (!text || !/[\t\n]/.test(text.replace(/\n$/, ''))) return;
+    e.preventDefault(); e.stopPropagation();
+    const grid = text.replace(/\r/g, '').replace(/\n$/, '').split('\n').map((l) => l.split('\t'));
+    const r0 = +ta.dataset.r, c0 = +ta.dataset.c;
+    change((x) => {
+      while (x.length < Math.min(TBL_MAX_ROWS, r0 + grid.length)) x.push(new Array(x[0].length).fill(''));
+      grid.forEach((line, i) => { if (!x[r0 + i]) return; line.forEach((v, j) => { if (c0 + j < TBL_MAX_COLS) x[r0 + i][c0 + j] = v.slice(0, 2000); }); });
+    }, [r0, c0]);
+  });
+  return el;
+}
+function renderTable(it) {
+  const el = textEls.get(it.id) || makeTableEl(it.id), force = el._force;
+  el._force = false;
+  el.classList.toggle('selected', selection.has(it.id));
+  Object.assign(el.style, { left: it.x + 'px', top: it.y + 'px', width: it.w + 'px' });
+  const rows = tblRows(it), key = JSON.stringify(rows);
+  if (el._key !== key && (force || !el.contains(document.activeElement))) { // rebuild, but not under your cursor while someone else's change arrives
+    el._key = key;
+    const table = el.querySelector('table'), trs = rows.map((row, r) => {
+      const tr = document.createElement('tr');
+      tr.className = r === 0 && it.head !== false ? 'head' : '';
+      for (let c = 0; c < row.length; c++) {
+        const td = document.createElement('td'), ta = document.createElement('textarea');
+        ta.rows = 1; ta.value = row[c]; ta.tabIndex = -1; ta.dataset.r = r; ta.dataset.c = c;
+        ta.setAttribute('aria-label', `Row ${r + 1}, column ${c + 1}`);
+        td.append(ta); tr.append(td);
+      }
+      return tr;
+    });
+    table.replaceChildren(...trs);
+    if (el._focus) { const [r, c] = el._focus; el._focus = null; el.querySelector(`textarea[data-r="${r}"][data-c="${c}"]`)?.focus(); }
+  }
+  for (const ta of el.querySelectorAll('textarea')) autosize(ta);
+}
+function editTable(id) {
+  const el = textEls.get(id);
+  if (!el) return;
+  setSelection([id]);
+  el.classList.add('live');
+  el.querySelector('textarea')?.focus();
+}
+function addTable() {
+  const [x, y] = toWorld(board.clientWidth / 2 - 240 * cam.z, board.clientHeight * 0.3);
+  const rows = Array.from({ length: 4 }, () => ['', '', '']);
+  const it = { id: crypto.randomUUID(), kind: 'table', t: Date.now(), x: Math.round(x), y: Math.round(y), w: 3 * TBL_COL, head: true, rows };
+  commit([{ id: it.id, before: null, after: it }]);
+  setTool('select');
+  editTable(it.id);
+}
 // Leave this canvas, finishing any unsent saves first (anything still unsent stays on this device).
 async function leaveTo(href) {
   if (pending.size && !stopped) {
@@ -1050,6 +1180,7 @@ function itemRect(it) {
     const e = connEnds(it);
     return e && { x0: Math.min(e[0][0], e[1][0]), y0: Math.min(e[0][1], e[1][1]), x1: Math.max(e[0][0], e[1][0]), y1: Math.max(e[0][1], e[1][1]) };
   }
+  if (it.kind === 'table') { const tel = textEls.get(it.id); return { x0: it.x, y0: it.y, x1: it.x + it.w, y1: it.y + (tel ? tel.offsetHeight : tblRows(it).length * 34) }; }
   const el = textEls.get(it.id);
   return { x0: it.x, y0: it.y, x1: it.x + textWidth(it), y1: it.y + (el ? el.offsetHeight : it.s * 1.6) };
 }
@@ -1083,7 +1214,7 @@ function hitItem(x, y) {
   if (!sorted) sorted = [...items.values()].sort((a, b) => a.t - b.t);
   for (let i = sorted.length - 1; i >= 0; i--) { // text and portals sit above everything drawn
     const it = sorted[i];
-    if (it.kind !== 'text' && it.kind !== 'portal' && it.kind !== 'embed' && it.kind !== 'voice') continue;
+    if (it.kind !== 'text' && it.kind !== 'portal' && it.kind !== 'embed' && it.kind !== 'voice' && it.kind !== 'table') continue;
     const b = itemRect(it);
     if (x >= b.x0 && x <= b.x1 && y >= b.y0 && y <= b.y1) return it;
   }
@@ -1467,6 +1598,7 @@ function doubleTap(e, tap, wasEditing) {
   else if (hit?.kind === 'portal') openPortal(hit.id);
   else if (hit?.kind === 'embed') textEls.get(hit.id)?.classList.toggle('live');
   else if (hit?.kind === 'voice') textEls.get(hit.id)?._toggle?.();
+  else if (hit?.kind === 'table') editTable(hit.id);
   else if (hit?.kind === 'conn') editLabel(hit.id);
   else if (hit?.kind === 'video') toggleVideo(hit);
   else if (!wasEditing) { setSelection([]); newText(x, y); }
@@ -2125,6 +2257,7 @@ async function recordVoice() {
   toast('Recording… tap the mic again to stop.');
 }
 $('#voice-add').onclick = recordVoice;
+$('#table-add').onclick = addTable;
 
 /* ---------- embeds: players and documents from other services on the canvas (list in /embeds.js); music is controlled from the ring ---------- */
 let EMBEDS, parseEmbed;

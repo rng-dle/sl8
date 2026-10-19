@@ -27,13 +27,18 @@ function buildServer(env, ctx, { userId, scopes = [], agent }) {
   const GAP = 32;
   const boxOf = (it) => {
     const w = it.w || (it.kind === 'portal' ? 240 : it.kind === 'voice' ? 260 : 320);
+    if (it.kind === 'table') { // estimate on the safe side: narrow columns wrap, each row is as tall as its tallest cell
+      const rows = Array.isArray(it.rows) ? it.rows : [['']], perLine = Math.max(4, Math.floor(((it.w || 160) / Math.max(1, rows[0]?.length || 1) - 16) / 8));
+      const h = rows.reduce((n, r) => n + Math.max(1, ...r.map((c) => String(c).split('\n').reduce((m, l) => m + Math.max(1, Math.ceil(l.length / perLine)), 0))) * 22 + 14, 16);
+      return { x: it.x || 0, y: it.y || 0, w: it.w || 160, h };
+    }
     if (it.kind !== 'text') return { x: it.x || 0, y: it.y || 0, w, h: it.h || (it.kind === 'voice' ? 52 : 132) };
     const sz = it.s || 17, perLine = Math.max(6, Math.floor((w - 12) / (sz * 0.62)));
     const lines = String(it.text || '').split('\n').reduce((n, l) => n + Math.max(1, Math.ceil(l.length / perLine)), 0);
     return { x: it.x || 0, y: it.y || 0, w, h: Math.ceil(lines * sz * 1.5 + 16) };
   };
   const boxes = async (canvasId, skipId) => {
-    const { results } = await env.DB.prepare("SELECT data FROM items WHERE note_id = ? AND json_extract(data, '$.kind') IN ('text', 'portal', 'voice', 'embed')").bind(canvasId).all();
+    const { results } = await env.DB.prepare("SELECT data FROM items WHERE note_id = ? AND json_extract(data, '$.kind') IN ('text', 'portal', 'voice', 'embed', 'table')").bind(canvasId).all();
     return results.map((r) => JSON.parse(r.data)).filter((it) => it.id !== skipId).map(boxOf);
   };
   const hits = (a, b) => a.x < b.x + b.w + GAP && b.x < a.x + a.w + GAP && a.y < b.y + b.h + GAP && b.y < a.y + a.h + GAP;
@@ -50,6 +55,19 @@ function buildServer(env, ctx, { userId, scopes = [], agent }) {
     }
     return { x: Math.round(me.x), y: Math.round(me.y) };
   };
+  // A box that grew pushes whatever it now covers (and everything below it in that column) down.
+  const pushDown = async (canvasId, was, next, ops) => {
+    const grow = boxOf(next).h - boxOf(was).h;
+    if (grow <= 0) return;
+    const me = boxOf(next);
+    const { results } = await env.DB.prepare("SELECT data FROM items WHERE note_id = ? AND json_extract(data, '$.kind') IN ('text', 'portal', 'voice', 'embed', 'table')").bind(canvasId).all();
+    const below = results.map((r) => JSON.parse(r.data)).filter((o) => o.id !== was.id && (o.y || 0) > me.y && (o.x || 0) < me.x + me.w + GAP && me.x < (o.x || 0) + boxOf(o).w + GAP);
+    const firstHit = below.filter((o) => hits(me, boxOf(o))).reduce((m, o) => Math.min(m, o.y || 0), Infinity);
+    if (firstHit !== Infinity) {
+      const shift = me.y + me.h + GAP - firstHit;
+      for (const o of below) if ((o.y || 0) >= firstHit) ops.push({ put: { ...o, y: Math.round((o.y || 0) + shift) } });
+    }
+  };
   // The clock, for AI apps that can't read one (some sandboxes block every time source). Same answer for everyone; no user data.
   s.registerTool('current_time', { description: 'The current date and time, in UTC and in Karachi time (PKT). Use it to timestamp entries when you have no clock of your own.' }, async () => {
     const now = new Date();
@@ -62,11 +80,11 @@ function buildServer(env, ctx, { userId, scopes = [], agent }) {
     return out(results.map((r) => ({ id: r.id, title: r.title, updated: new Date(r.updated_at).toISOString() })));
   });
 
-  s.registerTool('read_canvas', { description: "Read a canvas's typed notes, portals and voice notes (with transcripts). Handwriting is not included.", inputSchema: { canvas_id: z.string() } }, async ({ canvas_id }) => {
+  s.registerTool('read_canvas', { description: "Read a canvas's typed notes, tables (rows of cells), portals and voice notes (with transcripts). Handwriting is not included.", inputSchema: { canvas_id: z.string() } }, async ({ canvas_id }) => {
     const note = await owns(env, userId, canvas_id);
     if (!note) return err('No such canvas.');
-    const { results } = await env.DB.prepare("SELECT data FROM items WHERE note_id = ? AND json_extract(data, '$.kind') IN ('text', 'voice', 'portal') ORDER BY updated_at").bind(canvas_id).all();
-    const items = results.map((r) => { const it = JSON.parse(r.data); return it.kind === 'text' ? { id: it.id, kind: 'text', x: it.x, y: it.y, text: it.text } : it.kind === 'voice' ? { id: it.id, kind: 'voice', x: it.x, y: it.y, seconds: it.dur, transcript: it.text ?? null } : { id: it.id, kind: 'portal', opens_canvas: it.target, x: it.x, y: it.y }; });
+    const { results } = await env.DB.prepare("SELECT data FROM items WHERE note_id = ? AND json_extract(data, '$.kind') IN ('text', 'voice', 'portal', 'table') ORDER BY updated_at").bind(canvas_id).all();
+    const items = results.map((r) => { const it = JSON.parse(r.data); return it.kind === 'table' ? { id: it.id, kind: 'table', x: it.x, y: it.y, rows: it.rows } : it.kind === 'text' ? { id: it.id, kind: 'text', x: it.x, y: it.y, text: it.text } : it.kind === 'voice' ? { id: it.id, kind: 'voice', x: it.x, y: it.y, seconds: it.dur, transcript: it.text ?? null } : { id: it.id, kind: 'portal', opens_canvas: it.target, x: it.x, y: it.y }; });
     let body = JSON.stringify({ title: note.title, items });
     if (body.length > 60000) body = JSON.stringify({ title: note.title, truncated: true, items: items.slice(0, Math.max(1, Math.floor(items.length * 60000 / body.length))) });
     return out(body);
@@ -147,6 +165,20 @@ function buildServer(env, ctx, { userId, scopes = [], agent }) {
     return out({ added: item.id });
   });
 
+  const CELLS = z.array(z.array(z.string().max(2000)).min(1).max(20)).min(1).max(100);
+  const square = (rows) => { const n = Math.min(20, Math.max(1, ...rows.map((r) => r.length))); return rows.slice(0, 100).map((r) => Array.from({ length: n }, (_, i) => String(r[i] ?? ''))); };
+  s.registerTool('add_table', { description: 'Add a table (a grid of text cells) to a canvas. rows is a list of rows, each a list of cell texts; the first row is the header. Up to 100 rows by 20 columns. Short rows are padded. Without x and y it lands below the existing items; with them, it is moved down if it would overlap anything. Needs write access.', inputSchema: { canvas_id: z.string(), rows: CELLS, x: z.number().optional(), y: z.number().optional() } }, async ({ canvas_id, rows, x, y }) => {
+    if (!canWrite) return err(NEED_WRITE);
+    if (!(await owns(env, userId, canvas_id))) return err('No such canvas.');
+    const grid = square(rows);
+    const item = { id: crypto.randomUUID(), kind: 'table', t: Date.now(), x: x ?? 0, y, w: grid[0].length * 160, head: true, rows: grid };
+    if (JSON.stringify(item).length > 190_000) return err('That table is too large to save. Send fewer or shorter cells.');
+    Object.assign(item, await place(canvas_id, item));
+    if (!(await save(canvas_id, [{ put: item }]))) return err('Could not add the table.');
+    alert(canvas_id, grid.flat().join(' '));
+    return out({ added: item.id, rows: grid.length, columns: grid[0].length });
+  });
+
   s.registerTool('add_portal', { description: 'Add a portal card to a canvas that opens another of the user\'s canvases. Without x and y it lands below the existing items. Needs write access.', inputSchema: { canvas_id: z.string(), target_canvas_id: z.string(), x: z.number().optional(), y: z.number().optional() } }, async ({ canvas_id, target_canvas_id, x, y }) => {
     if (!canWrite) return err(NEED_WRITE);
     if (!(await owns(env, userId, canvas_id)) || !(await owns(env, userId, target_canvas_id))) return err('No such canvas.');
@@ -166,36 +198,45 @@ function buildServer(env, ctx, { userId, scopes = [], agent }) {
     if (!canEdit) return err(NEED_EDIT);
     if (!(await owns(env, userId, canvas_id))) return err('No such canvas.');
     const it = await itemOf(canvas_id, item_id);
-    if (!it || !['text', 'portal', 'voice'].includes(it.kind)) return err('No such note, portal or voice note.');
+    if (!it || !['text', 'portal', 'voice', 'table'].includes(it.kind)) return err('No such note, portal, voice note or table.');
     if (text === undefined && x === undefined && y === undefined) return err('Nothing to change.');
-    if (text !== undefined && it.kind !== 'text') return err('Only typed notes have text. Use set_voice_transcript for voice notes.');
+    if (text !== undefined && it.kind !== 'text') return err('Only typed notes have text. Use set_voice_transcript for voice notes and update_table for tables.');
     const next = { ...it, ...(text !== undefined && { text }), ...(x !== undefined && { x }), ...(y !== undefined && { y }) };
     const ops = [{ put: next }];
     if (x !== undefined || y !== undefined) Object.assign(next, await place(canvas_id, next, it.id)); // a move never lands on top of something else
     else {
-      // Longer text grows the box downward: push whatever it would now cover (and everything below it in that column) down.
-      const grow = boxOf(next).h - boxOf(it).h;
-      if (grow > 0) {
-        const me = boxOf(next);
-        const { results } = await env.DB.prepare("SELECT data FROM items WHERE note_id = ? AND json_extract(data, '$.kind') IN ('text', 'portal', 'voice', 'embed')").bind(canvas_id).all();
-        const below = results.map((r) => JSON.parse(r.data)).filter((o) => o.id !== it.id && (o.y || 0) > me.y && (o.x || 0) < me.x + me.w + GAP && me.x < (o.x || 0) + boxOf(o).w + GAP);
-        const firstHit = below.filter((o) => hits(me, boxOf(o))).reduce((m, o) => Math.min(m, o.y || 0), Infinity);
-        if (firstHit !== Infinity) {
-          const shift = me.y + me.h + GAP - firstHit;
-          for (const o of below) if ((o.y || 0) >= firstHit) ops.push({ put: { ...o, y: Math.round((o.y || 0) + shift) } });
-        }
-      }
+      await pushDown(canvas_id, it, next, ops); // longer text grows the box downward
     }
     if (!(await save(canvas_id, ops))) return err('Could not save the change.');
     alert(canvas_id, text, 'An item was moved');
     return out('Updated.');
   });
 
+  s.registerTool('update_table', { description: 'Change a table. Send ONE of: rows (replaces the whole grid), set_cells (a list of {row, col, text}, zero-based, row 0 is the header; the grid grows if needed), or append_rows (rows added at the bottom). Item ids come from read_canvas. Needs edit access.', inputSchema: { canvas_id: z.string(), item_id: z.string(), rows: CELLS.optional(), set_cells: z.array(z.object({ row: z.number().int().min(0).max(99), col: z.number().int().min(0).max(19), text: z.string().max(2000) })).min(1).max(500).optional(), append_rows: CELLS.optional() } }, async ({ canvas_id, item_id, rows, set_cells, append_rows }) => {
+    if (!canEdit) return err(NEED_EDIT);
+    if (!(await owns(env, userId, canvas_id))) return err('No such canvas.');
+    const it = await itemOf(canvas_id, item_id);
+    if (!it || it.kind !== 'table') return err('No such table.');
+    if ([rows, set_cells, append_rows].filter((v) => v !== undefined).length !== 1) return err('Send exactly one of rows, set_cells or append_rows.');
+    let grid = (it.rows || [['']]).map((r) => [...r]);
+    if (rows) grid = rows.map((r) => [...r]);
+    else if (append_rows) grid.push(...append_rows.map((r) => [...r]));
+    else for (const c of set_cells) { while (grid.length <= c.row) grid.push([]); grid[c.row][c.col] = c.text; }
+    grid = square(grid);
+    const next = { ...it, rows: grid, w: grid[0].length * 160 };
+    if (JSON.stringify(next).length > 190_000) return err('That table is too large to save. Use fewer or shorter cells.');
+    const ops = [{ put: next }];
+    await pushDown(canvas_id, it, next, ops);
+    if (!(await save(canvas_id, ops))) return err('Could not save the change.');
+    alert(canvas_id, grid.flat().join(' '));
+    return out({ updated: it.id, rows: grid.length, columns: grid[0].length });
+  });
+
   s.registerTool('delete_item', { description: 'Delete one typed note, portal or voice note from a canvas. Item ids come from read_canvas. Needs edit access.', inputSchema: { canvas_id: z.string(), item_id: z.string() } }, async ({ canvas_id, item_id }) => {
     if (!canEdit) return err(NEED_EDIT);
     if (!(await owns(env, userId, canvas_id))) return err('No such canvas.');
     const it = await itemOf(canvas_id, item_id);
-    if (!it || !['text', 'portal', 'voice'].includes(it.kind)) return err('No such note, portal or voice note.');
+    if (!it || !['text', 'portal', 'voice', 'table'].includes(it.kind)) return err('No such note, portal, voice note or table.');
     if (!(await save(canvas_id, [{ del: item_id }]))) return err('Could not delete it.');
     alert(canvas_id, 'An item was deleted');
     return out('Deleted.');

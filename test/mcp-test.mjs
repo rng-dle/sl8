@@ -64,7 +64,7 @@ const init = await rpc(ro.token, 'initialize', { protocolVersion: '2025-06-18', 
 ok(init.status === 200 && init.data?.result?.serverInfo?.name === 'thinksl8', 'MCP initialize works', JSON.stringify(init.data));
 const list = await rpc(ro.token, 'tools/list', {});
 const names = (list.data?.result?.tools || []).map((t) => t.name).sort().join(',');
-ok(names === 'add_note,add_portal,add_voice_note,bridge_agents,bridge_check,bridge_send,bridge_stats,bridge_thread,create_canvas,current_time,delete_item,get_voice_note,list_canvases,read_canvas,rename_canvas,search,set_voice_transcript,update_item', 'the eighteen tools are listed', names);
+ok(names === 'add_note,add_portal,add_table,add_voice_note,bridge_agents,bridge_check,bridge_send,bridge_stats,bridge_thread,create_canvas,current_time,delete_item,get_voice_note,list_canvases,read_canvas,rename_canvas,search,set_voice_transcript,update_item,update_table', 'the twenty tools are listed', names);
 
 let r = await call(ro.token, 'current_time', {});
 ok(!r.isError && /"utc":"20\d\d-/.test(r.text) && /PKT/.test(r.text), 'current_time gives UTC and Karachi time', r.text);
@@ -149,6 +149,29 @@ ok(r.text.includes('Tuesday'), 'search finds voice transcripts');
 r = await call(bobTok.token, 'get_voice_note', { canvas_id: note.id, item_id: added });
 ok(r.isError, "someone else's token can't read your recording");
 
+// Tables: a grid of text cells. Adding needs write access; changing needs edit access.
+r = await call(ro.token, 'add_table', { canvas_id: note.id, rows: [['a']] });
+ok(r.isError && /read-only/.test(r.text), 'a read-only connection cannot add tables', r.text);
+r = await call(rw.token, 'add_table', { canvas_id: note.id, rows: [['Item', 'Price'], ['Mop', '12.50'], ['Bucket']] });
+ok(!r.isError && /"rows":3/.test(r.text) && /"columns":2/.test(r.text), 'a write connection can add a table, and short rows are padded', r.text);
+const tableId = JSON.parse(r.text).added;
+const tbl = (await alice.json(`/api/notes/${note.id}`)).body.items.find((i) => i.id === tableId);
+ok(tbl?.kind === 'table' && tbl.rows.length === 3 && tbl.rows[2].join('|') === 'Bucket|' && tbl.w === 320 && Number.isFinite(tbl.x) && Number.isFinite(tbl.y), 'the table is saved as a square grid with a width', JSON.stringify(tbl));
+r = await call(rw.token, 'add_table', { canvas_id: bobNote.id, rows: [['x']] });
+ok(r.isError, "cannot add a table to someone else's canvas");
+r = await call(rw.token, 'add_table', { canvas_id: note.id, rows: [] });
+ok(r.isError, 'an empty table is refused');
+r = await call(rw.token, 'add_table', { canvas_id: note.id, rows: Array.from({ length: 101 }, () => ['x']) });
+ok(r.isError, 'more than 100 rows is refused');
+r = await call(rw.token, 'add_table', { canvas_id: note.id, rows: [Array.from({ length: 21 }, () => 'x')] });
+ok(r.isError, 'more than 20 columns is refused');
+r = await call(rw.token, 'read_canvas', { canvas_id: note.id });
+ok(r.text.includes(tableId) && r.text.includes('Bucket') && r.text.includes('"kind":"table"'), 'read_canvas shows the table and its rows');
+const tops = (await alice.json(`/api/notes/${note.id}`)).body.items.filter((i) => i.kind !== 'stroke' && i.id !== tableId && i.x < tbl.x + tbl.w && tbl.x < i.x + (i.w || 320) && i.y < tbl.y + 150 && tbl.y < i.y + 40);
+ok(tops.length === 0, 'the table does not land on top of anything', JSON.stringify(tops.map((i) => i.id)));
+r = await call(rw.token, 'update_table', { canvas_id: note.id, item_id: tableId, append_rows: [['Sponge', '3']] });
+ok(r.isError && /cannot edit/.test(r.text), 'a write-only connection cannot change a table', r.text);
+
 // Edit access is a separate approval. (Approving again replaces the earlier grant, so these come last.)
 const ed = await connect(alice, true, true);
 ok(ed.token, 'a connection with edit access can be approved', ed.error);
@@ -180,6 +203,31 @@ r = await call(ed.token, 'delete_item', { canvas_id: bobNote.id, item_id: 'b1' }
 ok(r.isError, "cannot delete from someone else's canvas");
 const bobStill = (await bob.json(`/api/notes/${bobNote.id}`)).body.items.some((i) => i.id === 'b1');
 ok(bobStill, "someone else's note is untouched");
+
+r = await call(ed.token, 'update_table', { canvas_id: note.id, item_id: tableId, append_rows: [['Sponge', '3']] });
+ok(!r.isError && /"rows":4/.test(r.text), 'update_table appends rows', r.text);
+r = await call(ed.token, 'update_table', { canvas_id: note.id, item_id: tableId, set_cells: [{ row: 1, col: 1, text: '13.00' }, { row: 0, col: 2, text: 'Qty' }] });
+ok(!r.isError && /"columns":3/.test(r.text), 'update_table sets cells and grows the grid', r.text);
+const tbl2 = (await alice.json(`/api/notes/${note.id}`)).body.items.find((i) => i.id === tableId);
+ok(tbl2.rows[1][1] === '13.00' && tbl2.rows[0][2] === 'Qty' && tbl2.rows.every((x) => x.length === 3) && tbl2.w === 480 && tbl2.x === tbl.x, 'the cells changed, every row has three cells, the width followed', JSON.stringify(tbl2));
+r = await call(ed.token, 'update_table', { canvas_id: note.id, item_id: tableId, rows: [['Only']] });
+ok(!r.isError && (await alice.json(`/api/notes/${note.id}`)).body.items.find((i) => i.id === tableId).rows.length === 1, 'update_table can replace the whole grid', r.text);
+r = await call(ed.token, 'update_table', { canvas_id: note.id, item_id: tableId, rows: [['a']], append_rows: [['b']] });
+ok(r.isError, 'sending two kinds of change at once is refused');
+r = await call(ed.token, 'update_table', { canvas_id: note.id, item_id: noteId, rows: [['a']] });
+ok(r.isError && /No such table/.test(r.text), 'update_table will not touch a typed note', r.text);
+r = await call(ed.token, 'update_table', { canvas_id: bobNote.id, item_id: tableId, rows: [['a']] });
+ok(r.isError, "cannot change a table on someone else's canvas");
+r = await call(ed.token, 'update_item', { canvas_id: note.id, item_id: tableId, x: 900, y: 900 });
+ok(!r.isError, 'update_item can move a table', r.text);
+r = await call(ed.token, 'delete_item', { canvas_id: note.id, item_id: tableId });
+ok(!r.isError && !(await alice.json(`/api/notes/${note.id}`)).body.items.some((i) => i.id === tableId), 'delete_item removes a table', r.text);
+r = await alice.json(`/api/notes/${note.id}/ops`, { ops: [{ put: { id: 'tx1', kind: 'table', t: 1, x: 0, y: 0, w: 320, rows: [['a', 'b'], ['c']] } }] });
+ok(r.status === 400, 'the canvas refuses a ragged table', JSON.stringify(r.body));
+r = await alice.json(`/api/notes/${note.id}/ops`, { ops: [{ put: { id: 'tx2', kind: 'table', t: 1, x: 0, y: 0, w: 320, rows: [['a', 'b'], ['c', 7]] } }] });
+ok(r.status === 400, 'the canvas refuses a table whose cell is not text', JSON.stringify(r.body));
+r = await alice.json(`/api/notes/${note.id}/ops`, { ops: [{ put: { id: 'tx3', kind: 'table', t: 1, x: 0, y: 0, w: 320, rows: [['a', 'b'], ['c', 'd']] } }] });
+ok(r.status === 200, 'the canvas accepts a well-formed table', JSON.stringify(r.body));
 
 console.log(failed ? `${failed} failed` : 'all passed');
 process.exit(failed ? 1 : 0);

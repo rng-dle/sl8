@@ -61,6 +61,20 @@
   .voice-time { flex: none; min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
   #voice-add.recording { background: #d93025; color: #fff; animation: beat 1.1s ease-in-out infinite; }
   @media (prefers-reduced-motion: reduce) { #voice-add.recording { animation: none; } }
+  /* tables: a grid of text cells */
+  .tbl { position: absolute; pointer-events: none; border: 2px solid var(--line); border-radius: 12px; overflow: hidden; background: var(--surface); box-shadow: var(--shadow); }
+  .tbl.selected { box-shadow: 0 0 0 3px var(--accent), var(--shadow); }
+  .tbl.live { pointer-events: auto; }
+  .tbl-bar { display: none; flex-wrap: wrap; gap: 6px; padding: 6px 8px; border-bottom: 1px solid var(--line); }
+  .tbl.live .tbl-bar { display: flex; }
+  .tbl-bar button { height: 24px; padding: 0 9px; border: 1px solid var(--line); border-radius: 999px; background: none; color: var(--text); font: 600 12px/1 var(--font-ui); }
+  .tbl-bar button[data-a="done"] { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .tbl table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+  .tbl td { padding: 0; border: 1px solid var(--line); vertical-align: top; }
+  .tbl textarea { display: block; width: 100%; min-height: 32px; box-sizing: border-box; padding: 6px 8px; border: 0; outline: 0; resize: none; overflow: hidden; background: none; color: var(--text); font: 400 15px/1.35 var(--font-ui); pointer-events: none; overflow-wrap: anywhere; }
+  .tbl.live textarea { pointer-events: auto; }
+  .tbl textarea:focus { background: var(--accent-soft); }
+  .tbl tr.head textarea { font-weight: 700; background: var(--accent-soft); }
   .embed { position: absolute; pointer-events: none; display: grid; grid-template-rows: 26px 1fr; border: 2px solid var(--accent); border-radius: 16px; overflow: hidden;
     background: color-mix(in srgb, var(--surface) 92%, transparent); box-shadow: var(--shadow); }
   .embed.selected { box-shadow: 0 0 0 3px var(--accent), var(--shadow); }
@@ -149,7 +163,7 @@
   .share-list li { display: flex; align-items: center; gap: 4px; font-size: 14px; }
   .share-list span { flex: 1; }
   /* opened from a share link: no account features; a view link has no tools */
-  [data-share] :is(#ai-open, #menu-open, #back, #sel-ai, #media-add, #voice-add, #trail) { display: none !important; }
+  [data-share] :is(#ai-open, #menu-open, #back, #sel-ai, #media-add, #voice-add, #table-add, #trail) { display: none !important; }
   [data-share=read] .dock { display: none; }
 
   .dock {
@@ -515,6 +529,7 @@
     <button class="icon-btn" id="voice-add" aria-label="Record a voice note" title="Record a voice note"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
     <button class="icon-btn" id="mm-btn" aria-label="Minimap (M)" aria-pressed="true" title="Minimap on or off (M). Shape and colours are in Settings."><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><rect x="12" y="11" width="6" height="5" rx="1"/></svg></button>
     <button class="icon-btn" id="music-btn" aria-label="Music and embeds" title="Music and embeds: Spotify, YouTube, Google Docs and more"><svg viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></button>
+    <button class="icon-btn" id="table-add" aria-label="Add a table" title="Add a table: tap twice to edit, Tab and Enter move between cells, paste rows from a spreadsheet"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16M15 4v16"/></svg></button>
     <input type="file" id="media-file" accept="image/*,video/*" multiple hidden>
     <span class="sep"></span>
     <button class="icon-btn" id="undo" aria-label="Undo" title="Undo (Ctrl+Z)" disabled><svg viewBox="0 0 24 24"><path d="M9 14 4 9l5-5"/><path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11"/></svg></button>

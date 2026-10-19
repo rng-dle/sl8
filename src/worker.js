@@ -142,6 +142,9 @@ const isId = (v) => typeof v === 'string' && ID.test(v);
 function validItem(it) {
   if (!it || typeof it !== 'object' || !isId(it.id) || !Number.isFinite(it.t)) return false;
   if (it.kind === 'stroke' || it.kind === 'text') return true;
+  if (it.kind === 'table') { // a grid of text cells: up to 100 rows by 20 columns, every row the same width
+    return Array.isArray(it.rows) && it.rows.length >= 1 && it.rows.length <= 100 && it.rows.every((r) => Array.isArray(r) && r.length === it.rows[0].length && r.length >= 1 && r.length <= 20 && r.every((c) => typeof c === 'string' && c.length <= 2000)) && [it.x, it.y, it.w].every(Number.isFinite) && it.w > 0;
+  }
   if (it.kind === 'conn') return isId(it.a) && isId(it.b); // arrow from item a to item b
   if (it.kind === 'portal') return isId(it.target); // card that opens another canvas
   if (it.kind === 'embed') return !!EMBEDS[it.service || 'spotify']?.valid.test(it.ref) && [it.x, it.y, it.w, it.h].every(Number.isFinite) && it.w > 0 && it.h > 0; // a player from the embeds list
