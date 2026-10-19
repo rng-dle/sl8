@@ -29,7 +29,7 @@ Mail goes out from `no-reply@thinksl8.com` (override with a `MAIL_FROM` variable
 `.dev.vars` (git-ignored) holds the local secret and points AI and email at a local stand-in, so nothing real is called:
 
 ```
-printf 'KEY_ENC_SECRET="local-dev-only-secret-0123456789abcdef"\nTEST_BASE="http://127.0.0.1:8788"\nRESEND_API_KEY="test-resend-key"\n' > .dev.vars
+printf 'KEY_ENC_SECRET="local-dev-only-secret-0123456789abcdef"\nTEST_BASE="http://127.0.0.1:8788"\nRESEND_API_KEY="test-resend-key"\nMCP_RESOURCE="http://127.0.0.1:8787/mcp"\n' > .dev.vars
 npx wrangler d1 migrations apply sl8-db --local
 node test/fake-provider.mjs &
 npx wrangler dev --port 8787 --local-upstream 127.0.0.1:8787

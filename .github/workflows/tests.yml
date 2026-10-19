@@ -24,7 +24,7 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - name: Local settings and database
         run: |
-          printf 'KEY_ENC_SECRET="local-dev-only-secret-0123456789abcdef"\nTEST_BASE="http://127.0.0.1:8788"\nRESEND_API_KEY="test-resend-key"\n' > .dev.vars
+          printf 'KEY_ENC_SECRET="local-dev-only-secret-0123456789abcdef"\nTEST_BASE="http://127.0.0.1:8788"\nRESEND_API_KEY="test-resend-key"\nMCP_RESOURCE="http://127.0.0.1:8787/mcp"\n' > .dev.vars
           npx wrangler d1 migrations apply sl8-db --local
       - name: Start the fake provider and the server
         run: |

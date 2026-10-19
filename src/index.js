@@ -19,7 +19,7 @@ export default {
       tokenEndpoint: '/oauth/token',
       clientRegistrationEndpoint: '/oauth/register',
       scopesSupported: ['canvas:read', 'canvas:write'],
-      resourceMetadata: { resource: env.MCP_RESOURCE || 'https://thinksl8.com/mcp', authorization_servers: [new URL(env.MCP_RESOURCE || 'https://thinksl8.com').origin], scopes_supported: ['canvas:read', 'canvas:write'] },
+      resourceMetadata: { resource: env.MCP_RESOURCE || 'https://thinksl8.com/mcp', authorization_servers: [new URL(env.MCP_RESOURCE || 'https://thinksl8.com').origin], scopes_supported: ['canvas:read', 'canvas:write', 'canvas:edit'] },
     });
     return provider.fetch(req, env, ctx);
   },
