@@ -6,10 +6,13 @@ import { canSendMail, sendMail } from './mail.js';
 import { sealKey, seal, unseal } from './ai.js';
 
 const ROUTINE = /^https:\/\/api\.anthropic\.com\/v1\/claude_code\/routines\/trig_[A-Za-z0-9_-]{4,80}\/fire$/;
+const NTFY = /^https:\/\/ntfy\.sh\/[A-Za-z0-9_-]{12,64}$/;
 const MAX_HOOKS = 20;
 const origin = (env) => (env.MCP_RESOURCE ? new URL(env.MCP_RESOURCE).origin : 'https://thinksl8.com');
 const okUrl = (env, u) => ROUTINE.test(u) || (!!env.TEST_BASE && u.startsWith(env.TEST_BASE + '/routines/') && u.endsWith('/fire'));
 const minCooldown = (env) => (env.TEST_BASE ? 1 : 30);
+const okTopic = (env, u) => NTFY.test(u) || (!!env.TEST_BASE && /^[^?#]+\/ntfy\/[A-Za-z0-9_-]{12,64}$/.test(u) && u.startsWith(env.TEST_BASE + '/ntfy/'));
+const newTopic = (env) => `${env.TEST_BASE ? env.TEST_BASE + '/ntfy' : 'https://ntfy.sh'}/thinksl8-${crypto.randomUUID().replace(/-/g, '').slice(0, 20)}`;
 const firstLine = (t) => String(t || '').split('\n').map((l) => l.trim()).find(Boolean)?.slice(0, 200) || '(no text)';
 const matches = (hook, texts) => {
   const words = hook.match.split('|').map((w) => w.trim()).filter(Boolean);
@@ -33,6 +36,15 @@ async function fire(env, hook, summary) {
         body: JSON.stringify({ text: `ThinkSL8 alert: something new on the canvas "${title}" (canvas_id ${hook.note_id}). Latest: ${summary}` }),
       });
       status = res.ok ? 'woke the routine' : `routine returned ${res.status}: ${(await res.text()).slice(0, 120)}`;
+    } else if (hook.kind === 'push') {
+      // ntfy: JSON publishing to the server root, so titles and messages can hold any characters.
+      const at = hook.url.lastIndexOf('/');
+      const res = await fetch(hook.url.slice(0, at), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ topic: hook.url.slice(at + 1), title: `ThinkSL8 · ${title}`.slice(0, 120), message: summary, click: link, tags: ['speech_balloon'] }),
+      });
+      status = res.ok ? 'pushed to your phone' : `ntfy returned ${res.status}`;
     } else {
       if (!canSendMail(env)) throw new Error("email isn't set up on this server yet");
       const user = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(hook.user_id).first();
@@ -106,8 +118,8 @@ export async function alertsPage(req, env) {
     env.DB.prepare('SELECT h.*, n.title FROM canvas_hooks h LEFT JOIN notes n ON n.id = h.note_id WHERE h.user_id = ? ORDER BY h.created_at').bind(user.id),
   ]);
   const when = (t) => (t ? new Date(t).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'never');
-  const list = hooks.map((h) => `<div class="hook"><b>${esc(h.label || (h.kind === 'routine' ? 'Claude routine' : 'Email me'))}</b> on <i>${esc(h.title || 'deleted canvas')}</i>
-<div class="muted">${h.kind === 'routine' ? 'Wakes a Claude routine' : 'Emails ' + esc(user.email)}${h.match ? ` · only when the text contains ${esc(h.match.split('|').join(' or '))}` : ''} · at most every ${h.cooldown} s<br>Last: ${when(h.last_fired_at)}${h.last_status ? ' · ' + esc(h.last_status) : ''}${h.pending_since ? ' · one waiting' : ''}</div>
+  const list = hooks.map((h) => `<div class="hook"><b>${esc(h.label || (h.kind === 'routine' ? 'Claude routine' : h.kind === 'push' ? 'Push to my phone' : 'Email me'))}</b> on <i>${esc(h.title || 'deleted canvas')}</i>
+<div class="muted">${h.kind === 'routine' ? 'Wakes a Claude routine' : h.kind === 'push' ? `Pushes to the ntfy topic <b>${esc(h.url.slice(h.url.lastIndexOf('/') + 1))}</b>` : 'Emails ' + esc(user.email)}${h.match ? ` · only when the text contains ${esc(h.match.split('|').join(' or '))}` : ''} · at most every ${h.cooldown} s<br>Last: ${when(h.last_fired_at)}${h.last_status ? ' · ' + esc(h.last_status) : ''}${h.pending_since ? ' · one waiting' : ''}</div>
 <form class="inline" method="post"><input type="hidden" name="id" value="${esc(h.id)}"><button name="action" value="test">Send a test</button> <button name="action" value="delete">Remove</button></form></div>`).join('') || '<p class="muted">No alerts yet.</p>';
   const opts = canvases.map((c) => `<option value="${esc(c.id)}">${esc(c.title)}</option>`).join('');
   return page(`<h1>Alerts</h1><p class="muted">When an AI connected to ThinkSL8 adds or changes something on a canvas, ThinkSL8 can wake a Claude routine or email you. Your own edits in the app don't trigger alerts.</p>
@@ -115,8 +127,10 @@ ${flash ? `<p><b>${esc(flash)}</b></p>` : ''}${list}
 <h2>Add an alert</h2>
 <form method="post"><input type="hidden" name="action" value="add">
 <label for="c">Canvas</label><select id="c" name="note_id" required>${opts}</select>
-<label for="k">What happens</label><select id="k" name="kind"><option value="routine">Wake a Claude routine</option><option value="email">Email me${canSendMail(env) ? '' : " (email isn't set up on this server yet)"}</option></select>
+<label for="k">What happens</label><select id="k" name="kind"><option value="push">Push to my phone (ntfy app)</option><option value="routine">Wake a Claude routine</option><option value="email">Email me${canSendMail(env) ? '' : " (email isn't set up on this server yet)"}</option></select>
 <label for="l">Name (optional)</label><input id="l" type="text" name="label" maxlength="80" placeholder="Wake claude-ai">
+<label for="n">ntfy topic (for a phone push; leave empty and one is made for you)</label><input id="n" type="text" name="topic" maxlength="64" placeholder="thinksl8-…">
+<p class="muted">Install the free ntfy app, then subscribe to the topic shown on the alert after you add it. Anyone who knows the topic name can read these pushes, so keep it private.</p>
 <label for="u">Routine URL (for a routine)</label><input id="u" type="url" name="url" placeholder="https://api.anthropic.com/v1/claude_code/routines/trig_…/fire">
 <label for="t">Routine token (for a routine)</label><input id="t" type="password" name="token" autocomplete="off" placeholder="sk-ant-oat01-…">
 <p class="muted">In claude.ai/code/routines, open the routine, add an API trigger and generate a token. Paste the URL and token here. The token is stored encrypted and never shown again.</p>
@@ -127,7 +141,7 @@ ${flash ? `<p><b>${esc(flash)}</b></p>` : ''}${list}
 
 async function addHook(env, user, f) {
   const noteId = String(f.get('note_id') || '');
-  const kind = f.get('kind') === 'email' ? 'email' : 'routine';
+  const kind = ['email', 'push'].includes(f.get('kind')) ? f.get('kind') : 'routine';
   const label = String(f.get('label') || '').trim().slice(0, 80);
   const match = String(f.get('match') || '').trim().slice(0, 300);
   const cooldown = Math.min(86400, Math.max(minCooldown(env), Math.round(Number(f.get('cooldown')) || 120)));
@@ -135,6 +149,11 @@ async function addHook(env, user, f) {
   const n = await env.DB.prepare('SELECT COUNT(*) AS n FROM canvas_hooks WHERE user_id = ?').bind(user.id).first('n');
   if (n >= MAX_HOOKS) return `You already have ${MAX_HOOKS} alerts.`;
   let url = null, secret = null;
+  if (kind === 'push') {
+    const t = String(f.get('topic') || '').trim().replace(/^https:\/\/ntfy\.sh\//, '');
+    url = t ? `${env.TEST_BASE ? env.TEST_BASE + '/ntfy' : 'https://ntfy.sh'}/${t}` : newTopic(env);
+    if (!okTopic(env, url)) return 'Use a topic of 12 to 64 letters, digits, - or _ (or leave it empty).';
+  }
   if (kind === 'routine') {
     url = String(f.get('url') || '').trim();
     const token = String(f.get('token') || '').trim();
@@ -146,5 +165,5 @@ async function addHook(env, user, f) {
   }
   await env.DB.prepare('INSERT INTO canvas_hooks (id, user_id, note_id, kind, label, url, secret, match, cooldown, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)')
     .bind(crypto.randomUUID(), user.id, noteId, kind, label, url, secret, match, cooldown, Date.now()).run();
-  return 'Alert added.';
+  return kind === 'push' ? `Alert added. In the ntfy app, subscribe to the topic ${url.slice(url.lastIndexOf('/') + 1)}` : 'Alert added.';
 }
