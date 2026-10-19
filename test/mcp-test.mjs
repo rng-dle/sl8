@@ -28,7 +28,7 @@ ok(reg.client_id, 'an app can register itself', JSON.stringify(reg));
 const meta = await (await fetch(B + '/.well-known/oauth-authorization-server')).json();
 ok(meta.token_endpoint && meta.authorization_endpoint, 'authorization server metadata is published', JSON.stringify(meta));
 
-async function connect(user, write) {
+async function connect(user, write, edit) {
   const verifier = randomBytes(32).toString('base64url'), challenge = createHash('sha256').update(verifier).digest('base64url');
   const q = `?response_type=code&client_id=${reg.client_id}&redirect_uri=${encodeURIComponent(REDIRECT)}&state=xyz&code_challenge=${challenge}&code_challenge_method=S256&scope=canvas:read`;
   let r = await fetch(B + '/authorize' + q);
@@ -36,7 +36,7 @@ async function connect(user, write) {
   r = await fetch(B + '/authorize' + q, { headers: { cookie: user.cookie() } });
   const html = await r.text();
   if (r.status !== 200 || !/Test AI/.test(html)) return { error: `consent page ${r.status}` };
-  const form = new URLSearchParams({ q, decision: 'allow', ...(write && { write: '1' }) });
+  const form = new URLSearchParams({ q, decision: 'allow', ...(write && { write: '1' }), ...(edit && { edit: '1' }) });
   const bad = await fetch(B + '/authorize', { method: 'POST', redirect: 'manual', headers: { cookie: user.cookie(), 'content-type': 'application/x-www-form-urlencoded', origin: 'https://evil.example' }, body: form });
   if (bad.status !== 403) return { error: `cross-site consent was not refused (${bad.status})` };
   r = await fetch(B + '/authorize', { method: 'POST', redirect: 'manual', headers: { cookie: user.cookie(), 'content-type': 'application/x-www-form-urlencoded', origin: B }, body: form });
@@ -64,7 +64,7 @@ const init = await rpc(ro.token, 'initialize', { protocolVersion: '2025-06-18', 
 ok(init.status === 200 && init.data?.result?.serverInfo?.name === 'thinksl8', 'MCP initialize works', JSON.stringify(init.data));
 const list = await rpc(ro.token, 'tools/list', {});
 const names = (list.data?.result?.tools || []).map((t) => t.name).sort().join(',');
-ok(names === 'add_note,add_voice_note,create_canvas,get_voice_note,list_canvases,read_canvas,search,set_voice_transcript', 'the eight tools are listed', names);
+ok(names === 'add_note,add_portal,add_voice_note,create_canvas,delete_item,get_voice_note,list_canvases,read_canvas,rename_canvas,search,set_voice_transcript,update_item', 'the twelve tools are listed', names);
 
 let r = await call(ro.token, 'list_canvases', {});
 ok(!r.isError && r.text.includes('Plans') && !r.text.includes('Bobs secret'), 'list_canvases shows only your canvases', r.text);
@@ -78,6 +78,10 @@ r = await call(ro.token, 'add_voice_note', { canvas_id: note.id, audio_base64: B
 ok(r.isError && /read-only/.test(r.text), 'a read-only connection cannot add recordings', r.text);
 r = await call(ro.token, 'create_canvas', { title: 'Should not exist' });
 ok(r.isError && /read-only/.test(r.text), 'a read-only connection cannot create canvases', r.text);
+for (const [tool, args] of [['update_item', { canvas_id: note.id, item_id: 'n1', text: 'changed' }], ['delete_item', { canvas_id: note.id, item_id: 'n1' }], ['rename_canvas', { canvas_id: note.id, title: 'Renamed' }]]) {
+  r = await call(ro.token, tool, args);
+  ok(r.isError && /cannot edit/.test(r.text), `a read-only connection cannot use ${tool}`, r.text);
+}
 r = await call(ro.token, 'add_note', { canvas_id: note.id, text: 'should not land' });
 ok(r.isError && /read-only/.test(r.text), 'a read-only connection cannot add typed notes', r.text);
 
@@ -107,6 +111,17 @@ r = await call(rw.token, 'add_note', { canvas_id: madeId, text: 'first entry in 
 ok(!r.isError, 'a note can be added to a canvas the connector created', r.text);
 r = await call(rw.token, 'create_canvas', { title: '' });
 ok(r.isError, 'an empty title is refused');
+r = await call(rw.token, 'update_item', { canvas_id: note.id, item_id: 'n1', text: 'changed' });
+ok(r.isError && /cannot edit/.test(r.text), 'a write-only connection still cannot edit', r.text);
+r = await call(rw.token, 'delete_item', { canvas_id: note.id, item_id: 'n1' });
+ok(r.isError && /cannot edit/.test(r.text), 'a write-only connection still cannot delete', r.text);
+r = await call(rw.token, 'add_portal', { canvas_id: note.id, target_canvas_id: madeId });
+ok(!r.isError && r.text.includes('added'), 'a write connection can add a portal to another of your canvases', r.text);
+const portalId = JSON.parse(r.text).added;
+r = await call(rw.token, 'add_portal', { canvas_id: note.id, target_canvas_id: bobNote.id });
+ok(r.isError, "a portal cannot point at someone else's canvas");
+r = await call(rw.token, 'read_canvas', { canvas_id: note.id });
+ok(r.text.includes(portalId) && r.text.includes(madeId), 'read_canvas shows the portal and where it opens');
 r = await call(rw.token, 'add_note', { canvas_id: note.id, text: '[ID 0001] hello from the other Claude\nsecond line' });
 ok(!r.isError && r.text.includes('added'), 'a write connection can add a typed note', r.text);
 const noteId = JSON.parse(r.text).added;
@@ -131,6 +146,38 @@ r = await call(rw.token, 'search', { query: 'caterer' });
 ok(r.text.includes('Tuesday'), 'search finds voice transcripts');
 r = await call(bobTok.token, 'get_voice_note', { canvas_id: note.id, item_id: added });
 ok(r.isError, "someone else's token can't read your recording");
+
+// Edit access is a separate approval. (Approving again replaces the earlier grant, so these come last.)
+const ed = await connect(alice, true, true);
+ok(ed.token, 'a connection with edit access can be approved', ed.error);
+r = await call(ed.token, 'update_item', { canvas_id: note.id, item_id: noteId, text: '[ID 0001] edited text', x: 120, y: 340 });
+ok(!r.isError, 'update_item changes the text and moves a typed note', r.text);
+const edited = (await alice.json(`/api/notes/${note.id}`)).body.items.find((i) => i.id === noteId);
+ok(edited?.text === '[ID 0001] edited text' && edited.x === 120 && edited.y === 340 && edited.kind === 'text' && edited.w === 320, 'the edit shows on the canvas and keeps the note\'s other fields', JSON.stringify(edited));
+r = await call(ed.token, 'update_item', { canvas_id: note.id, item_id: added, text: 'nope' });
+ok(r.isError, 'update_item will not put typed text on a voice note');
+r = await call(ed.token, 'update_item', { canvas_id: note.id, item_id: added, x: 7, y: 9 });
+ok(!r.isError, 'a voice note can be moved');
+r = await call(ed.token, 'update_item', { canvas_id: note.id, item_id: noteId });
+ok(r.isError, 'update_item with nothing to change is refused');
+r = await call(ed.token, 'update_item', { canvas_id: bobNote.id, item_id: 'b1', text: 'hacked' });
+ok(r.isError, "cannot edit someone else's canvas");
+r = await call(ed.token, 'rename_canvas', { canvas_id: madeId, title: '  Bridge Log (renamed)  ' });
+ok(!r.isError && JSON.parse(r.text).title === 'Bridge Log (renamed)', 'rename_canvas works', r.text);
+r = await call(ed.token, 'rename_canvas', { canvas_id: bobNote.id, title: 'mine now' });
+ok(r.isError, "cannot rename someone else's canvas");
+r = await call(ed.token, 'delete_item', { canvas_id: note.id, item_id: portalId });
+ok(!r.isError, 'delete_item removes a portal', r.text);
+r = await call(ed.token, 'delete_item', { canvas_id: note.id, item_id: noteId });
+ok(!r.isError, 'delete_item removes a typed note', r.text);
+const after = (await alice.json(`/api/notes/${note.id}`)).body.items.map((i) => i.id);
+ok(!after.includes(portalId) && !after.includes(noteId) && after.includes('n1'), 'only the deleted items are gone');
+r = await call(ed.token, 'delete_item', { canvas_id: note.id, item_id: noteId });
+ok(r.isError, 'deleting something already deleted says so');
+r = await call(ed.token, 'delete_item', { canvas_id: bobNote.id, item_id: 'b1' });
+ok(r.isError, "cannot delete from someone else's canvas");
+const bobStill = (await bob.json(`/api/notes/${bobNote.id}`)).body.items.some((i) => i.id === 'b1');
+ok(bobStill, "someone else's note is untouched");
 
 console.log(failed ? `${failed} failed` : 'all passed');
 process.exit(failed ? 1 : 0);
