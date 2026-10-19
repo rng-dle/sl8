@@ -111,7 +111,7 @@ export function registerBridge(s, env, { userId, scopes = [], agent }, { wake = 
       open(agent, 'to'), open(agent, 'from'),
       env.DB.prepare('SELECT MAX(created_at) AS t FROM bridge_messages WHERE user_id = ? AND (to_agent = ? OR from_agent = ?)').bind(userId, agent, agent).first('t'),
     ]);
-    const pace = nextCheck({ unread: batch.length || more, openForMe, openForThem, idleMs: Date.now() - (last || 0) });
+    const pace = nextCheck({ unread: more, openForMe, openForThem, idleMs: Date.now() - (last || 0) });
     if (!batch.length) return out({ unread: 0, ...pace });
     return out({
       unread: batch.length, more_waiting: more, ...pace,
