@@ -59,7 +59,7 @@ createServer(async (req, res) => {
     fires.push({ id: rest[0], auth: req.headers.authorization || '', body: await readBody(req), at: Date.now() });
     return send(res, 200, { type: 'routine_fire', claude_code_session_id: 'session_test', claude_code_session_url: 'https://claude.ai/code/session_test' });
   }
-  if (url.pathname === '/ntfy' && req.method === 'POST') { const m = await readBody(req); m.at = Date.now(); pushes.push(m); return send(res, 200, { id: randomUUID() }); }
+  if (url.pathname === '/ntfy' && req.method === 'POST') { const m = await readBody(req); m.at = Date.now(); m.auth = req.headers.authorization || ''; pushes.push(m); return send(res, 200, { id: randomUUID() }); }
   if (url.pathname === '/__pushes') return send(res, 200, pushes.filter((m) => m.topic === url.searchParams.get('topic')));
   if (url.pathname === '/__fires') return send(res, 200, fires.filter((f) => f.id === url.searchParams.get('id')));
   if (key.includes('revoked') || revokedKeys.has(key)) return send(res, 401, { error: { message: 'Key revoked' } });

@@ -39,12 +39,19 @@ async function fire(env, hook, summary) {
     } else if (hook.kind === 'push') {
       // ntfy: JSON publishing to the server root, so titles and messages can hold any characters.
       const at = hook.url.lastIndexOf('/');
+      const headers = { 'content-type': 'application/json' };
+      // An ntfy access token makes pushes count against the user's ntfy account instead of the shared Cloudflare address, which ntfy.sh rate-limits (429).
+      if (hook.secret) {
+        const key = await sealKey(env);
+        if (!key) throw new Error('server has no KEY_ENC_SECRET');
+        headers.authorization = 'Bearer ' + (await unseal(key, hook.user_id, hook.secret));
+      }
       const res = await fetch(hook.url.slice(0, at), {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers,
         body: JSON.stringify({ topic: hook.url.slice(at + 1), title: `ThinkSL8 · ${title}`.slice(0, 120), message: summary, click: link, tags: ['speech_balloon'] }),
       });
-      status = res.ok ? 'pushed to your phone' : `ntfy returned ${res.status}`;
+      status = res.ok ? 'pushed to your phone' : `ntfy returned ${res.status}${res.status === 429 ? ' (rate limited: add an ntfy access token to this alert)' : res.status === 401 || res.status === 403 ? ' (token not accepted)' : ''}`;
     } else {
       if (!canSendMail(env)) throw new Error("email isn't set up on this server yet");
       const user = await env.DB.prepare('SELECT email FROM users WHERE id = ?').bind(hook.user_id).first();
@@ -119,7 +126,7 @@ export async function alertsPage(req, env) {
   ]);
   const when = (t) => (t ? new Date(t).toISOString().replace('T', ' ').slice(0, 16) + ' UTC' : 'never');
   const list = hooks.map((h) => `<div class="hook"><b>${esc(h.label || (h.kind === 'routine' ? 'Claude routine' : h.kind === 'push' ? 'Push to my phone' : 'Email me'))}</b> on <i>${esc(h.title || 'deleted canvas')}</i>
-<div class="muted">${h.kind === 'routine' ? 'Wakes a Claude routine' : h.kind === 'push' ? `Pushes to the ntfy topic <b>${esc(h.url.slice(h.url.lastIndexOf('/') + 1))}</b>` : 'Emails ' + esc(user.email)}${h.match ? ` · only when the text contains ${esc(h.match.split('|').join(' or '))}` : ''} · at most every ${h.cooldown} s<br>Last: ${when(h.last_fired_at)}${h.last_status ? ' · ' + esc(h.last_status) : ''}${h.pending_since ? ' · one waiting' : ''}</div>
+<div class="muted">${h.kind === 'routine' ? 'Wakes a Claude routine' : h.kind === 'push' ? `Pushes to the ntfy topic <b>${esc(h.url.slice(h.url.lastIndexOf('/') + 1))}</b>${h.secret ? ' with your ntfy token' : ''}` : 'Emails ' + esc(user.email)}${h.match ? ` · only when the text contains ${esc(h.match.split('|').join(' or '))}` : ''} · at most every ${h.cooldown} s<br>Last: ${when(h.last_fired_at)}${h.last_status ? ' · ' + esc(h.last_status) : ''}${h.pending_since ? ' · one waiting' : ''}</div>
 <form class="inline" method="post"><input type="hidden" name="id" value="${esc(h.id)}"><button name="action" value="test">Send a test</button> <button name="action" value="delete">Remove</button></form></div>`).join('') || '<p class="muted">No alerts yet.</p>';
   const opts = canvases.map((c) => `<option value="${esc(c.id)}">${esc(c.title)}</option>`).join('');
   return page(`<h1>Alerts</h1><p class="muted">When an AI connected to ThinkSL8 adds or changes something on a canvas, ThinkSL8 can wake a Claude routine or email you. Your own edits in the app don't trigger alerts.</p>
@@ -130,7 +137,8 @@ ${flash ? `<p><b>${esc(flash)}</b></p>` : ''}${list}
 <label for="k">What happens</label><select id="k" name="kind"><option value="push">Push to my phone (ntfy app)</option><option value="routine">Wake a Claude routine</option><option value="email">Email me${canSendMail(env) ? '' : " (email isn't set up on this server yet)"}</option></select>
 <label for="l">Name (optional)</label><input id="l" type="text" name="label" maxlength="80" placeholder="Wake claude-ai">
 <label for="n">ntfy topic (for a phone push; leave empty and one is made for you)</label><input id="n" type="text" name="topic" maxlength="64" placeholder="thinksl8-…">
-<p class="muted">Install the free ntfy app, then subscribe to the topic shown on the alert after you add it. Anyone who knows the topic name can read these pushes, so keep it private.</p>
+<label for="nt">ntfy access token (optional, fixes "ntfy returned 429")</label><input id="nt" type="password" name="ntfytoken" autocomplete="off" placeholder="tk_…">
+<p class="muted">Install the free ntfy app, then subscribe to the topic shown on the alert after you add it. Anyone who knows the topic name can read these pushes, so keep it private. ntfy.sh limits requests per address and this server shares its address, so if pushes fail with 429, make a free ntfy.sh account, create an access token (Account, Access tokens) and paste it here. It is stored encrypted and never shown again.</p>
 <label for="u">Routine URL (for a routine)</label><input id="u" type="url" name="url" placeholder="https://api.anthropic.com/v1/claude_code/routines/trig_…/fire">
 <label for="t">Routine token (for a routine)</label><input id="t" type="password" name="token" autocomplete="off" placeholder="sk-ant-oat01-…">
 <p class="muted">In claude.ai/code/routines, open the routine, add an API trigger and generate a token. Paste the URL and token here. The token is stored encrypted and never shown again.</p>
@@ -153,6 +161,13 @@ async function addHook(env, user, f) {
     const t = String(f.get('topic') || '').trim().replace(/^https:\/\/ntfy\.sh\//, '');
     url = t ? `${env.TEST_BASE ? env.TEST_BASE + '/ntfy' : 'https://ntfy.sh'}/${t}` : newTopic(env);
     if (!okTopic(env, url)) return 'Use a topic of 12 to 64 letters, digits, - or _ (or leave it empty).';
+    const token = String(f.get('ntfytoken') || '').trim();
+    if (token) {
+      if (!/^[\w.-]{20,400}$/.test(token)) return "That doesn't look like an ntfy access token (it starts with tk_).";
+      const key = await sealKey(env);
+      if (!key) return "This server can't store tokens safely yet (no KEY_ENC_SECRET).";
+      secret = await seal(key, user.id, token);
+    }
   }
   if (kind === 'routine') {
     url = String(f.get('url') || '').trim();
