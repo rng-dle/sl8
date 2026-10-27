@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>New canvas · ThinkSL8</title>
+<meta name="theme-color" content="#0a2b48">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main class="page"><p class="empty" id="msg">Opening a blank canvas…</p></main>
+<div id="toast" class="toast" role="alert" hidden></div>
+<script src="/common.js"></script>
+<script>
+// The Android home-screen widget lands here: make an empty canvas and go straight into it.
+(async () => {
+  try {
+    const { note } = await api('/api/notes', { method: 'POST', body: { title: 'Untitled' } });
+    location.replace('/note?id=' + encodeURIComponent(note.id));
+  } catch (err) {
+    if (err.status === 401) return location.replace('/');
+    document.getElementById('msg').textContent = err.message;
+  }
+})();
+</script>
+</body>
+</html>
