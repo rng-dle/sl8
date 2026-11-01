@@ -29,9 +29,16 @@ for (const [link, service, ref] of cases) {
   const r = parseEmbed(link);
   ok(r?.service === service && r.ref === ref, `${service}: ${link.slice(0, 60)}`, JSON.stringify(r));
 }
-for (const bad of ['javascript:alert(1)', 'https://evil.example/watch?v=dQw4w9WgXcQ', 'https://www.pinterest.com/someone/board/', 'not a link', `https://open.spotify.com/track/${id22}x`.replace(id22, 'short')]) {
+for (const bad of ['javascript:alert(1)', 'not a link', 'http://insecure.example/page', 'https://user:pw@example.com/', 'https://localhost/x', 'data:text/html,hi']) {
   ok(parseEmbed(bad) === null, `refused: ${bad}`, JSON.stringify(parseEmbed(bad)));
 }
 ok(Object.values(EMBEDS).every((e) => /^https:\/\//.test(e.src(e.size.length ? 'x' : 'x', 'thinksl8.com'))), 'every frame address is https');
+// any other https page becomes a web tile (live only in the Mac app; a link everywhere else), after every named service
+for (const [link, ref] of [['https://open.spotify.com/', 'open.spotify.com'], ['https://en.wikipedia.org/wiki/Cat?x=1', 'en.wikipedia.org/wiki/Cat?x=1'], ['https://www.pinterest.com/someone/board/', 'www.pinterest.com/someone/board/']]) {
+  const r = parseEmbed(link);
+  ok(r?.service === 'web' && r.ref === ref && EMBEDS.web.valid.test(ref), `web tile: ${link}`, JSON.stringify(r));
+}
+ok(parseEmbed(`https://open.spotify.com/track/${id22}`).service === 'spotify', 'named services win over the web catch-all');
+
 console.log(failed ? `\n${failed} failed` : '\nall passed');
 process.exit(failed ? 1 : 0);

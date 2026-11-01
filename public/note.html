@@ -70,6 +70,7 @@
   .embed-host, .embed-host iframe { width: 100%; height: 100%; border: 0; display: block; }
   .embed-host iframe { pointer-events: none; }
   .embed.live .embed-host iframe { pointer-events: auto; }
+  .embed-host a { pointer-events: auto; display: grid; place-items: center; height: 100%; padding: 16px; text-align: center; color: var(--text); font: 600 14px/1.4 var(--font-ui); }
   .embed.playing { animation: beat 1.1s ease-in-out infinite; }
   @keyframes beat { 0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent), 0 0 18px color-mix(in srgb, var(--accent) 30%, transparent); }
     50% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 45%, transparent), 0 0 44px color-mix(in srgb, var(--accent) 60%, transparent); } }

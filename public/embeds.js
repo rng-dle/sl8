@@ -114,6 +114,14 @@ export const EMBEDS = {
     src: (r) => `https://www.canva.com/design/${r}/view?embed`,
     size: () => [480, 300],
   },
+  // Any https page. Only the Mac app shows it live (a real browser tile placed over the canvas); everywhere else it is a link,
+  // because sites forbid being framed. Never put this in an iframe.
+  web: {
+    label: 'Web page', valid: /^[a-z0-9][a-z0-9.-]*\.[a-z]{2,24}(:\d{1,5})?(\/[^\s<>"'\\]{0,500})?$/i,
+    parse: (u) => (u.protocol === 'https:' && !u.username && !u.password ? u.host + (u.pathname === '/' && !u.search ? '' : u.pathname + u.search) : null),
+    src: (r) => `https://${r}`,
+    size: () => [720, 480],
+  },
   pinterest: {
     label: 'Pinterest', valid: /^\d{5,25}$/,
     parse: (u) => { const s = seg(u); return host(u, 'pinterest.com') && s[0] === 'pin' && /^\d+$/.test(s[1] || '') ? s[1] : null; },
@@ -131,7 +139,7 @@ export function parseEmbed(text) {
   if (!/^https?:\/\//i.test(t)) t = 'https://' + t;
   let u;
   try { u = new URL(t); } catch { return null; }
-  for (const [service, e] of Object.entries(EMBEDS)) {
+  for (const [service, e] of Object.entries(EMBEDS).sort(([a], [b]) => (a === 'web') - (b === 'web'))) { // 'web' catches everything, so last
     let ref = null;
     try { ref = e.parse(u); } catch {}
     if (ref && e.valid.test(ref)) return { service, ref };
