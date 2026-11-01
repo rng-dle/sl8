@@ -673,7 +673,7 @@ async function resync() {
 // saves: changes made here or received since a poll began, so a poll answer that may be older is asked again.
 let since = 0, saves = 0, lastActivity = Date.now(), pollTimer = 0, sock = null, sockRetry = 0;
 function connectLive() {
-  if (stopped || !('WebSocket' in self)) return;
+  if (stopped || !('WebSocket' in self) || self.SL8_NATIVE) return; // the Mac app polls its own local store
   const ws = new WebSocket(location.origin.replace(/^http/, 'ws') + notePath);
   ws.onopen = () => { sock = ws; sockRetry = 0; poll(); };
   ws.onmessage = (e) => {
@@ -2292,7 +2292,7 @@ function endPicking() {
   $('#picker').hidden = true;
   schedule(false);
 }
-const shareUrl = (token) => `${location.origin}/note?share=${token}`;
+const shareUrl = (token) => `${self.SL8_NATIVE ? 'https://thinksl8.com' : location.origin}/note?share=${token}`;
 const copyLink = (url) => navigator.clipboard?.writeText(url).then(() => toast('Link copied.'), () => {});
 async function openShare(made) {
   closeMenu();

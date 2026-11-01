@@ -1,0 +1,22 @@
+name: Mac app
+
+on:
+  workflow_dispatch:
+  push:
+    paths: ['mac/**', 'public/**', '.github/workflows/mac-app.yml']
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build
+        run: bash mac/build.sh
+      - name: Smoke test
+        run: bash mac/smoke-test.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: thinksl8-mac
+          path: |
+            mac/build/ThinkSL8.dmg
+            mac/build/ThinkSL8.zip
