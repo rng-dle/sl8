@@ -57,6 +57,7 @@ final class Sync {
     private func finishRound() -> Bool { lock.lock(); defer { lock.unlock() }; if again { again = false; return true }; running = false; return false }
 
     func run() async {
+        if ProcessInfo.processInfo.environment["SL8_NO_SYNC"] != nil { return } // the smoke test talks to the local API only
         guard begin() else { return }
         repeat { await cycle() } while finishRound()
     }

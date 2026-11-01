@@ -60,7 +60,7 @@ final class Conn {
 /// A tiny HTTP server on 127.0.0.1 for the app's own window. A real http origin (not a custom scheme) so the web view treats
 /// the page as a secure context: microphone, clipboard and so on work. Only this app's window holds the launch cookie.
 final class HttpServer {
-    let token = UUID().uuidString + UUID().uuidString
+    let token = ProcessInfo.processInfo.environment["SL8_TEST_TOKEN"] ?? (UUID().uuidString + UUID().uuidString)
     private(set) var port: UInt16 = 0
     private var listener: NWListener?
     private let queue = DispatchQueue(label: "sl8.http")
