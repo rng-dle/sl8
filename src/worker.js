@@ -715,7 +715,10 @@ async function api(req, env, ctx, url) {
       keys = keys.filter((k) => !unused.includes(k));
       if (full()) return fail(409, `You've used your space for photos and videos (${MAX_FILES} files or ${MAX_USER_BYTES / 1e6} MB). Delete some from your canvases to add more.`);
     }
-    const id = crypto.randomUUID();
+    const wanted = url.searchParams.get('id'); // the Mac app names a file when it is added offline, so canvases can point at it before it is uploaded
+    if (wanted && !FILE_ID.test(wanted)) return fail(400, 'Bad file id.');
+    if (wanted && await env.FILES.get(fileKey(user.id, wanted), 'stream')) return json({ id: wanted });
+    const id = wanted || crypto.randomUUID();
     await env.FILES.put(fileKey(user.id, id), bytes, { metadata: { type, size: bytes.length, at: Date.now() } });
     return json({ id }, 201);
   }
@@ -800,7 +803,13 @@ async function api(req, env, ctx, url) {
     if (method === 'POST') {
       const now = Date.now();
       const sample = body.sample === true;
-      const note = { id: crypto.randomUUID(), title: sample ? 'Start here' : String(body.title || 'Untitled').slice(0, 200), updated_at: now };
+      // a device that made the canvas offline picks its id (the Mac app); asking again with the same id is a no-op
+      const wanted = typeof body.id === 'string' && FILE_ID.test(body.id) ? body.id : null;
+      if (wanted) {
+        const had = await env.DB.prepare('SELECT id, title, updated_at, user_id FROM notes WHERE id = ?').bind(wanted).first();
+        if (had) return had.user_id === user.id ? json({ note: { id: had.id, title: had.title, updated_at: had.updated_at } }) : fail(409, 'That id is taken.');
+      }
+      const note = { id: wanted || crypto.randomUUID(), title: sample ? 'Start here' : String(body.title || 'Untitled').slice(0, 200), updated_at: now };
       const stmts = [env.DB.prepare('INSERT INTO notes VALUES (?, ?, ?, ?, ?)').bind(note.id, user.id, note.title, now, now)];
       const style = cleanStyle(body.style);
       if (Object.keys(style).length) stmts.push(saveStyle(env, note.id, style));
