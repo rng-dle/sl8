@@ -5,6 +5,9 @@ on:
   push:
     paths: ['mac/**', 'public/**', '.github/workflows/mac-app.yml']
 
+permissions:
+  contents: write # to publish the build as a release
+
 jobs:
   build:
     runs-on: macos-15
@@ -20,3 +23,10 @@ jobs:
           path: |
             mac/build/ThinkSL8.dmg
             mac/build/ThinkSL8.zip
+      - name: Publish as the mac-latest release
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view mac-latest >/dev/null 2>&1 || gh release create mac-latest --title "ThinkSL8 for Mac (latest)" --notes "Latest build of the Mac app from main. Ad-hoc signed; first launch: right-click, Open."
+          gh release upload mac-latest mac/build/ThinkSL8.dmg mac/build/ThinkSL8.zip --clobber
