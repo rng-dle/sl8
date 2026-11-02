@@ -2158,6 +2158,7 @@ function renderEmbed(it) {
   if (el._ref === it.ref) return;
   const first = !el._ref;
   el._ref = it.ref;
+  if (service === 'web') return renderWeb(el, it);
   if (service !== 'spotify') {
     const host = el.querySelector('.embed-host');
     let f = host.querySelector('iframe');
@@ -2171,6 +2172,41 @@ function renderEmbed(it) {
     ctrls.set(it.id, c);
     c.addListener('playback_update', (e) => { el.classList.toggle('playing', !e.data.isPaused && !e.data.isBuffering); musicSync(); });
   }));
+}
+// A web page: in the Mac app a real browser view is laid over this card's body (the app is told where it is, every frame it moves);
+// anywhere else it is just a link, since sites don't allow being framed.
+function renderWeb(el, it) {
+  const host = el.querySelector('.embed-host'), site = it.ref.split('/')[0].replace(/^www\./, '');
+  el.querySelector('span').textContent = site;
+  if (self.SL8_NATIVE && window.webkit?.messageHandlers?.sl8web) {
+    host.replaceChildren();
+    el.querySelector('.embed-use').hidden = true;
+    el.dataset.web = 'https://' + it.ref;
+    startTiles();
+    return;
+  }
+  const a = document.createElement('a');
+  a.href = 'https://' + it.ref; a.target = '_blank'; a.rel = 'noopener noreferrer';
+  a.textContent = `Open ${site} in a new tab. It shows live in the Mac app.`;
+  host.replaceChildren(a);
+}
+let tilesOn = false, lastTiles = '';
+function startTiles() {
+  if (tilesOn) return;
+  tilesOn = true;
+  const tick = () => {
+    const list = [];
+    for (const [id, el] of textEls) {
+      if (!el.dataset?.web) continue;
+      const r = el.querySelector('.embed-host').getBoundingClientRect();
+      const x = Math.round(r.left), y = Math.round(r.top), w = Math.round(r.width) - 12, h = Math.round(r.height) - 12; // leave the resize corner on the canvas
+      list.push({ id, url: el.dataset.web, x, y, w, h, show: w > 40 && h > 40 && x < innerWidth && y < innerHeight && x + w > 0 && y + h > 0 });
+    }
+    const json = JSON.stringify(list);
+    if (json !== lastTiles) { lastTiles = json; webkit.messageHandlers.sl8web.postMessage(list); }
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
 }
 const musicSync = () => $('#music-btn').classList.toggle('playing', !!document.querySelector('.embed.playing'));
 const activeSpotify = () => { const mine = [...items.values()].filter((i) => i.kind === 'embed' && (i.service || 'spotify') === 'spotify'); return (mine.find((i) => selection.has(i.id)) || mine.sort((a, b) => b.t - a.t)[0])?.id; };

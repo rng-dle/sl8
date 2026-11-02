@@ -14,7 +14,76 @@ server.handler = { r, c in Task { await local.handle(r, c) } }
 
 let navy = NSColor(srgbRed: 10 / 255, green: 43 / 255, blue: 72 / 255, alpha: 1)
 
-final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate {
+let safariUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15"
+
+/// Delegate for web tiles: free browsing (these are the user's own pages), links stay in the tile, nothing else gets in.
+final class TileDelegate: NSObject, WKNavigationDelegate, WKUIDelegate {
+    func webView(_ w: WKWebView, decidePolicyFor action: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        let scheme = action.request.url?.scheme ?? ""
+        decisionHandler(["http", "https", "about", "blob", "data"].contains(scheme) && !action.shouldPerformDownload ? .allow : .cancel)
+    }
+    func webView(_ w: WKWebView, decidePolicyFor response: WKNavigationResponse,
+                 decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void) {
+        decisionHandler(response.canShowMIMEType ? .allow : .cancel)
+    }
+    func webView(_ w: WKWebView, createWebViewWith c: WKWebViewConfiguration, for action: WKNavigationAction,
+                 windowFeatures: WKWindowFeatures) -> WKWebView? {
+        if action.request.url != nil { w.load(action.request) }
+        return nil
+    }
+    func webView(_ w: WKWebView, requestMediaCapturePermissionFor origin: WKSecurityOrigin, initiatedByFrame frame: WKFrameInfo,
+                 type: WKMediaCaptureType, decisionHandler: @escaping (WKPermissionDecision) -> Void) { decisionHandler(.deny) }
+}
+
+final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKDownloadDelegate, WKScriptMessageHandler {
+    var tiles: [String: WKWebView] = [:]
+    let tileDelegate = TileDelegate()
+
+    func makeTile(_ url: URL) -> WKWebView {
+        let cfg = WKWebViewConfiguration()
+        cfg.websiteDataStore = .default() // logins (Spotify and the rest) stay between launches
+        cfg.mediaTypesRequiringUserActionForPlayback = []
+        let v = WKWebView(frame: .zero, configuration: cfg)
+        v.customUserAgent = safariUA
+        v.navigationDelegate = tileDelegate
+        v.uiDelegate = tileDelegate
+        v.allowsBackForwardNavigationGestures = true
+        v.wantsLayer = true
+        v.layer?.cornerRadius = 12
+        v.layer?.masksToBounds = true
+        v.load(URLRequest(url: url))
+        return v
+    }
+
+    func clearTiles() {
+        for v in tiles.values { v.removeFromSuperview() }
+        tiles = [:]
+    }
+
+    /// The page says where each web tile sits, in page pixels, every time it moves.
+    func userContentController(_ c: WKUserContentController, didReceive m: WKScriptMessage) {
+        guard m.name == "sl8web", let list = m.body as? [[String: Any]] else { return }
+        var keep = Set<String>()
+        let z = web.pageZoom
+        for t in list {
+            guard let id = t["id"] as? String, let s = t["url"] as? String, let url = URL(string: s), url.scheme == "https" else { continue }
+            keep.insert(id)
+            func n(_ k: String) -> CGFloat { CGFloat((t[k] as? NSNumber)?.doubleValue ?? 0) }
+            let w = max(1, n("w") * z), h = max(1, n("h") * z), x = n("x") * z
+            let y = web.isFlipped ? n("y") * z : web.bounds.height - n("y") * z - h
+            let tile: WKWebView
+            if let have = tiles[id] { tile = have } else {
+                tile = makeTile(url); tiles[id] = tile; web.addSubview(tile)
+            }
+            tile.frame = NSRect(x: x, y: y, width: w, height: h)
+            tile.isHidden = !(t["show"] as? Bool ?? false)
+        }
+        for id in Array(tiles.keys) where !keep.contains(id) { tiles[id]?.removeFromSuperview(); tiles[id] = nil }
+    }
+
+    func webView(_ w: WKWebView, didStartProvisionalNavigation n: WKNavigation!) { clearTiles() }
+
     var window: NSWindow!
     var web: WKWebView!
     var lastDownload: URL?
@@ -28,6 +97,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         let cfg = WKWebViewConfiguration()
         cfg.applicationNameForUserAgent = "ThinkSL8-Mac"
         cfg.mediaTypesRequiringUserActionForPlayback = []
+        cfg.userContentController.add(self, name: "sl8web")
         cfg.userContentController.addUserScript(WKUserScript(source: "window.SL8_NATIVE = true;", injectionTime: .atDocumentStart, forMainFrameOnly: false))
         web = WKWebView(frame: .zero, configuration: cfg)
         web.navigationDelegate = self
