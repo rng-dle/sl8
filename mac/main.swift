@@ -22,6 +22,12 @@ final class DragStrip: NSView {
     }
 }
 
+/// A window that may cover the whole display, menu bar strip and notch included (macOS normally keeps windows below it).
+final class ImmersiveWindow: NSWindow {
+    var immersive = false
+    override func constrainFrameRect(_ r: NSRect, to s: NSScreen?) -> NSRect { immersive ? r : super.constrainFrameRect(r, to: s) }
+}
+
 let safariUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15"
 
 /// Delegate for web tiles: free browsing (these are the user's own pages), links stay in the tile, nothing else gets in.
@@ -92,7 +98,8 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
 
     func webView(_ w: WKWebView, didStartProvisionalNavigation n: WKNavigation!) { clearTiles() }
 
-    var window: NSWindow!
+    var window: ImmersiveWindow!
+    var savedFrame: NSRect?
     var web: WKWebView!
     var lastDownload: URL?
     let monitor = NWPathMonitor()
@@ -106,7 +113,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         cfg.applicationNameForUserAgent = "ThinkSL8-Mac"
         cfg.mediaTypesRequiringUserActionForPlayback = []
         // make room for the traffic lights, since the page now reaches the top-left corner
-        let css = ".topbar{padding-left:84px!important}.page-top{padding-top:24px}"
+        let css = "html:not(.sl8-immersive) .topbar{padding-left:84px!important}html:not(.sl8-immersive) .page-top{padding-top:24px}"
         cfg.userContentController.addUserScript(WKUserScript(source: "document.addEventListener('DOMContentLoaded',()=>{const s=document.createElement('style');s.textContent='\(css)';document.head.append(s)});", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         cfg.userContentController.add(self, name: "sl8web")
         cfg.userContentController.addUserScript(WKUserScript(source: "window.SL8_NATIVE = true;", injectionTime: .atDocumentStart, forMainFrameOnly: false))
@@ -118,7 +125,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         let z = UserDefaults.standard.double(forKey: "zoom")
         web.pageZoom = z > 0 ? CGFloat(z) : 1
 
-        window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
+        window = ImmersiveWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                           backing: .buffered, defer: false)
         window.title = "ThinkSL8"
@@ -144,15 +151,14 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         strip.autoresizingMask = web.isFlipped ? [.width] : [.width, .minYMargin]
 
         let nc = NotificationCenter.default
-        nc.addObserver(forName: NSWindow.didEnterFullScreenNotification, object: window, queue: .main) { _ in UserDefaults.standard.set(true, forKey: "fullscreen") }
-        nc.addObserver(forName: NSWindow.didExitFullScreenNotification, object: window, queue: .main) { _ in UserDefaults.standard.set(false, forKey: "fullscreen") }
+        _ = nc
 
         buildMenu()
         web.load(URLRequest(url: URL(string: "http://127.0.0.1:\(server.port)/__open?k=\(server.token)")!))
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        if UserDefaults.standard.object(forKey: "fullscreen") as? Bool ?? true { // full screen unless you left it
-            DispatchQueue.main.async { self.window.toggleFullScreen(nil) }
+        if UserDefaults.standard.object(forKey: "immersive") as? Bool ?? true { // edge to edge unless you left it
+            DispatchQueue.main.async { self.setImmersive(true) }
         }
     }
 
@@ -206,7 +212,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
             mi("Actual Size", #selector(zoomReset), "0"),
             mi("Zoom In", #selector(zoomIn), "="),
             mi("Zoom Out", #selector(zoomOut), "-"), sep(),
-            mi("Enter Full Screen", #selector(NSWindow.toggleFullScreen(_:)), "f", [.command, .control]),
+            mi("Immersive Full Screen", #selector(toggleImmersive), "f", [.command, .control]),
         ])
         let win = submenu("Window", [
             mi("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m"),
@@ -215,6 +221,33 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         NSApp.mainMenu = bar
         NSApp.windowsMenu = win
     }
+
+    /// Covers the entire display, the strip around the notch too, with the menu bar and Dock hidden. Cmd+Ctrl+F leaves it.
+    func setImmersive(_ on: Bool) {
+        guard let screen = window.screen ?? NSScreen.main, window.immersive != on else { return }
+        UserDefaults.standard.set(on, forKey: "immersive")
+        if on {
+            savedFrame = window.frame
+            window.immersive = true
+            window.level = NSWindow.Level(rawValue: NSWindow.Level.mainMenu.rawValue + 1)
+            NSApp.presentationOptions = [.hideMenuBar, .hideDock]
+            for b in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] { window.standardWindowButton(b)?.isHidden = true }
+            window.setFrame(screen.frame, display: true)
+        } else {
+            window.immersive = false
+            window.level = .normal
+            NSApp.presentationOptions = []
+            for b in [NSWindow.ButtonType.closeButton, .miniaturizeButton, .zoomButton] { window.standardWindowButton(b)?.isHidden = false }
+            window.setFrame(savedFrame ?? NSRect(x: 0, y: 0, width: 1280, height: 820), display: true)
+            if savedFrame == nil { window.center() }
+        }
+        applyImmersiveClass()
+    }
+    @objc func toggleImmersive() { setImmersive(!window.immersive) }
+    func applyImmersiveClass() {
+        web?.evaluateJavaScript("document.documentElement.classList.toggle('sl8-immersive', \(window?.immersive ?? false))", completionHandler: nil)
+    }
+    func webView(_ w: WKWebView, didFinish n: WKNavigation!) { applyImmersiveClass() }
 
     @objc func syncNow() { sync.kick(after: 0) }
     @objc func reloadPage() { web.reload() }
