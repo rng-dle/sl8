@@ -32,6 +32,8 @@ jobs:
           npx wrangler dev --port 8787 --local-upstream 127.0.0.1:8787 > "$RUNNER_TEMP/wrangler.log" 2>&1 &
           for i in $(seq 1 90); do curl -s -o /dev/null http://127.0.0.1:8787/ && exit 0; sleep 1; done
           echo "server did not start"; tail -n 60 "$RUNNER_TEMP/wrangler.log"; exit 1
+      - name: Calculator engine test
+        run: node test/calc-test.mjs
       - name: Smoke test
         run: set -o pipefail; bash test/smoke-test.sh 2>&1 | tee -a "$RUNNER_TEMP/tests.log"
       - name: MCP connector test
