@@ -14,6 +14,14 @@ server.handler = { r, c in Task { await local.handle(r, c) } }
 
 let navy = NSColor(srgbRed: 10 / 255, green: 43 / 255, blue: 72 / 255, alpha: 1)
 
+/// A thin strip along the top edge that drags the window (the title bar is gone) and zooms it on double-click.
+final class DragStrip: NSView {
+    override var mouseDownCanMoveWindow: Bool { true }
+    override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 { window?.performZoom(nil) } else { window?.performDrag(with: event) }
+    }
+}
+
 let safariUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15"
 
 /// Delegate for web tiles: free browsing (these are the user's own pages), links stay in the tile, nothing else gets in.
@@ -97,6 +105,9 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         let cfg = WKWebViewConfiguration()
         cfg.applicationNameForUserAgent = "ThinkSL8-Mac"
         cfg.mediaTypesRequiringUserActionForPlayback = []
+        // make room for the traffic lights, since the page now reaches the top-left corner
+        let css = ".topbar{padding-left:84px!important}.page-top{padding-top:24px}"
+        cfg.userContentController.addUserScript(WKUserScript(source: "document.addEventListener('DOMContentLoaded',()=>{const s=document.createElement('style');s.textContent='\(css)';document.head.append(s)});", injectionTime: .atDocumentStart, forMainFrameOnly: true))
         cfg.userContentController.add(self, name: "sl8web")
         cfg.userContentController.addUserScript(WKUserScript(source: "window.SL8_NATIVE = true;", injectionTime: .atDocumentStart, forMainFrameOnly: false))
         web = WKWebView(frame: .zero, configuration: cfg)
@@ -108,10 +119,12 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         web.pageZoom = z > 0 ? CGFloat(z) : 1
 
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 820),
-                          styleMask: [.titled, .closable, .miniaturizable, .resizable],
+                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                           backing: .buffered, defer: false)
         window.title = "ThinkSL8"
         window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden // the canvas runs edge to edge; only the traffic lights float over it
+        window.collectionBehavior.insert(.fullScreenPrimary)
         window.backgroundColor = navy
         window.contentView = web
         window.minSize = NSSize(width: 480, height: 360)
@@ -124,10 +137,23 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKUIDele
         Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in sync.kick(after: 0) }
         sync.kick(after: 1)
 
+        let strip = DragStrip(frame: NSRect(x: 0, y: 0, width: 0, height: 8))
+        strip.autoresizingMask = [.width, .minYMargin]
+        web.addSubview(strip)
+        strip.frame = NSRect(x: 0, y: web.isFlipped ? 0 : web.bounds.height - 8, width: web.bounds.width, height: 8)
+        strip.autoresizingMask = web.isFlipped ? [.width] : [.width, .minYMargin]
+
+        let nc = NotificationCenter.default
+        nc.addObserver(forName: NSWindow.didEnterFullScreenNotification, object: window, queue: .main) { _ in UserDefaults.standard.set(true, forKey: "fullscreen") }
+        nc.addObserver(forName: NSWindow.didExitFullScreenNotification, object: window, queue: .main) { _ in UserDefaults.standard.set(false, forKey: "fullscreen") }
+
         buildMenu()
         web.load(URLRequest(url: URL(string: "http://127.0.0.1:\(server.port)/__open?k=\(server.token)")!))
         window.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        if UserDefaults.standard.object(forKey: "fullscreen") as? Bool ?? true { // full screen unless you left it
+            DispatchQueue.main.async { self.window.toggleFullScreen(nil) }
+        }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { true }
