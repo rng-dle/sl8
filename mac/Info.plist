@@ -14,6 +14,7 @@
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSPrefersDisplaySafeAreaCompatibilityMode</key><false/> <!-- full screen reaches under the notch instead of stopping below it -->
   <key>NSMicrophoneUsageDescription</key><string>ThinkSL8 records voice notes onto your canvas.</string>
   <key>NSAppTransportSecurity</key><dict><key>NSAllowsLocalNetworking</key><true/></dict>
 </dict>
