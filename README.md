@@ -43,6 +43,7 @@ bash test/smoke-test.sh && node test/ai-test.mjs && node test/account-test.mjs &
 
 - `smoke-test.sh`: accounts, saving, isolation between users, lockout (per account and network, so strangers can't lock you out), logout.
 - `bot-test.mjs`: the bot check, against a second `wrangler dev --port 8789 --var TURNSTILE_SITE_KEY:test-site --var TURNSTILE_SECRET:test-secret`.
+- `calc-test.mjs`: the scientific calculator's engine (`public/calc.js`): precedence, implicit multiplication, trig in degrees/radians/gradians, factorials, logs, roots, percent, combinatorics, every error message, no `eval`. Needs no server: `node test/calc-test.mjs`.
 - `ai-test.mjs`: AI connections, encryption at rest, OpenRouter sign-in (PKCE), scopes, retrieval, every error state, the daily cap.
 - `account-test.mjs`: email confirmation (sharing waits for it), password reset by email, change password, log out everywhere, export, search, account deletion, rate limits, the 404 page.
 - `share-test.mjs`: share links (whole canvas or squares, view or edit), area checks on every write, files through links, catching up on changes and deletes.

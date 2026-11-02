@@ -1824,7 +1824,7 @@ $('#fab').addEventListener('click', (e) => { if (e.detail === 0) openRing(!ringO
 $('#ring-scrim').addEventListener('pointerdown', (e) => { e.preventDefault(); openRing(false); });
 // tools with nothing more to choose close the ring; drawing tools keep it open for their colours and sizes
 $('nav.bar').addEventListener('click', (e) => {
-  const b = e.target.closest('[data-tool], #media-add, #music-btn, #mm-btn');
+  const b = e.target.closest('[data-tool], #media-add, #music-btn, #calc-btn, #mm-btn');
   if (b && ringOpen() && !['pen', 'hl', 'eraser', 'text'].includes(b.dataset.tool)) openRing(false);
 });
 addEventListener('keydown', (e) => { if (e.key === 'Escape' && ringOpen()) openRing(false); });
@@ -2245,6 +2245,21 @@ $('#music-new').addEventListener('submit', async (e) => {
   playLink(found.service, found.ref, name);
 });
 addEventListener('pointerdown', (e) => { if (!$('#music-menu').hidden && !e.target.closest?.('#music-menu, #music-btn')) $('#music-menu').hidden = true; }, true);
+
+/* ---------- scientific calculator (panel in /calc-ui.js, maths in /calc.js): results can be put on the canvas as a note ---------- */
+let calcUi;
+function putCalcResult(text) {
+  if (share?.mode === 'read') return toast('This link is view only.');
+  const [x, y] = toWorld(board.clientWidth / 2, board.clientHeight * 0.35);
+  if (!canWrite(x, y)) return outside();
+  const s = tool.width.text, it = { id: crypto.randomUUID(), kind: 'text', t: Date.now(), x: Math.round(x), y: Math.round(y), w: 320, s, c: tool.color.text, text };
+  commit([{ id: it.id, before: null, after: it }]);
+  setSelection([it.id]);
+}
+$('#calc-btn').onclick = async () => {
+  closeMenu();
+  try { calcUi ||= (await import('/calc-ui.js')).mount({ insert: putCalcResult, toast }); calcUi.toggle(); } catch (e) { console.error(e); toast("The calculator didn't load. Check your connection."); }
+};
 
 /* ---------- adding portals ---------- */
 function closePortalMenu() { $('#portal-menu').hidden = true; }
