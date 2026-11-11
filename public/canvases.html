@@ -17,6 +17,20 @@
   .head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 16px; margin: 32px 0 12px; }
   .head h1 { margin: 0; font: 400 clamp(32px, 6vw, 44px)/1.05 var(--font-display); }
   .head h1 small { font: 500 15px var(--font-ui); color: var(--muted); margin-left: 8px; font-variant-numeric: tabular-nums; }
+  .shelf { margin: 8px 0 0; padding: 18px 0 0; list-style: none; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 28px 18px; }
+  .cover { position: relative; }
+  .cover a { display: flex; flex-direction: column; justify-content: flex-end; gap: 4px; aspect-ratio: 3 / 4; padding: 38px 14px 14px; border: 1px solid var(--line); border-radius: 6px 12px 12px 6px; background: var(--surface); color: var(--text); text-decoration: none; box-shadow: 0 1px 0 var(--line), 0 6px 14px -8px rgb(0 0 0 / .35); overflow: hidden; transition: transform .15s; }
+  .cover a::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 9px; background: var(--tape); opacity: .55; }
+  .cover a:hover { transform: translateY(-3px); }
+  .cover a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  .cover .tape { position: absolute; z-index: 1; top: -11px; left: 50%; width: 46%; height: 24px; margin-left: -23%; transform: rotate(var(--tilt)); pointer-events: none;
+    background: repeating-linear-gradient(115deg, rgb(255 255 255 / .28) 0 6px, transparent 6px 12px), var(--tape); opacity: .92;
+    clip-path: polygon(0 0, 4% 14%, 0 28%, 4% 42%, 0 57%, 4% 71%, 0 85%, 3% 100%, 100% 100%, 96% 85%, 100% 71%, 96% 57%, 100% 42%, 96% 28%, 100% 14%, 96% 0); }
+  .cover .t { display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; font: 400 20px/1.2 var(--font-display); }
+  .cover .d { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .cover .del { position: absolute; z-index: 2; top: 8px; right: 6px; width: 32px; height: 32px; min-height: 0; background: color-mix(in srgb, var(--surface) 80%, transparent); }
+  .cover .del svg { width: 16px; height: 16px; }
+  .cover .del.confirm { width: auto; padding: 0 10px; font-size: 13px; }
   .notes { margin: 0; padding: 0; list-style: none; }
   .notes li { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--line); }
   .notes a { flex: 1; min-width: 0; display: grid; gap: 2px; padding: 16px 4px; color: var(--text); text-decoration: none; }
@@ -56,7 +70,7 @@
     <ul class="notes results" id="results"></ul>
   </div>
   <p class="empty" id="loading">Loading…</p>
-  <ul class="notes" id="notes"></ul>
+  <ul class="shelf" id="notes"></ul>
   <p class="empty" id="empty" hidden><b>No canvases yet</b>Each canvas is an endless page. Start one and write, draw or type anywhere on it.</p>
 </main>
 <div id="toast" class="toast" role="alert" hidden></div>
@@ -74,18 +88,31 @@ function ago(ms) {
   return 'just now';
 }
 
+// Each canvas gets a washi-tape colour and tilt from its id, so a cover looks the same every time.
+const TAPES = ['#e8b4b8', '#f2c879', '#9fd3c7', '#a9c4eb', '#c9b6e4', '#f1a98f'];
+function tapeFor(id) {
+  let h = 0;
+  for (const c of id) h = (h * 31 + c.charCodeAt(0)) >>> 0;
+  return [TAPES[h % TAPES.length], ((h >> 3) % 9) - 4];
+}
+
 let current = [];
 function render() {
   $('#loading').hidden = true;
   $('#count').textContent = current.length ? String(current.length) : '';
   $('#empty').hidden = current.length > 0;
   $('#notes').replaceChildren(...current.map((n) => {
+    const [tape, tilt] = tapeFor(n.id);
     const li = document.createElement('li');
+    li.className = 'cover';
+    li.style.setProperty('--tape', tape);
+    li.style.setProperty('--tilt', tilt + 'deg');
     const a = document.createElement('a');
     a.href = '/note?id=' + encodeURIComponent(n.id);
     const t = document.createElement('span'); t.className = 't'; t.textContent = n.title;
-    const d = document.createElement('span'); d.className = 'd'; d.textContent = 'Edited ' + ago(n.updated_at);
+    const d = document.createElement('span'); d.className = 'd'; d.textContent = ago(n.updated_at);
     a.append(t, d);
+    const strip = document.createElement('span'); strip.className = 'tape'; strip.setAttribute('aria-hidden', 'true');
     const del = document.createElement('button');
     del.type = 'button';
     del.className = 'icon-btn del';
@@ -95,7 +122,7 @@ function render() {
     del.onclick = async () => {
       if (!del.classList.contains('confirm')) {
         del.classList.add('confirm');
-        del.textContent = 'Delete canvas';
+        del.textContent = 'Delete?';
         timer = setTimeout(render, 4000);
         return;
       }
@@ -109,7 +136,7 @@ function render() {
       }
       render();
     };
-    li.append(a, del);
+    li.append(a, strip, del);
     return li;
   }));
 }

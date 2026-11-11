@@ -2,4 +2,5 @@
 <resources>
     <string name="asset_statements">[{\"relation\": [\"delegate_permission/common.handle_all_urls\"], \"target\": {\"namespace\": \"web\", \"site\": \"https://thinksl8.com\"}}]</string>
     <color name="ic_launcher_background">#0a2b48</color>
+    <string name="widget_description">Tap for a blank ThinkSL8 canvas</string>
 </resources>
