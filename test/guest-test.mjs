@@ -43,7 +43,7 @@ ok((await g2.json('/api/notes/' + list[0].id)).status === 404, 'a guest cannot o
 const gx = new Client(); await gx.json('/api/guest', { method: 'POST', body: {} });
 const blocked = [
   ['/api/ai', 'GET'], ['/api/files', 'POST'], ['/api/market', 'POST'], ['/api/account/delete', 'POST'], ['/api/password/change', 'POST'],
-  [`/api/notes/${list2[0].id}/shares`, 'POST'],
+  [`/api/notes/${list2[0].id}/shares`, 'POST'], // 404 vs 403 doesn't matter: blocked before the lookup
 ];
 for (const [path, method] of blocked) {
   const res = await gx.json(path, { method, body: {} });
@@ -52,7 +52,8 @@ for (const [path, method] of blocked) {
 let made = 0;
 for (let i = 0; i < 8; i++) made += (await gx.json('/api/notes', { method: 'POST', body: { title: 'x' } })).status === 201 ? 1 : 0;
 ok(made === 5, 'guests can hold 12 canvases (7 demo + 5 own)', String(made));
-ok((await gx.json('/api/notes/' + list2[0].id + '/ops', { method: 'POST', body: { ops: [{ put: { id: 'n1', kind: 'text', t: 1, x: 0, y: 0, w: 320, s: 17, c: 'ink', text: 'mine' } }] } })).status === 200, 'guests can edit the demo');
+const gxFirst = (await gx.json('/api/notes')).body.notes[0].id;
+ok((await gx.json('/api/notes/' + gxFirst + '/ops', { method: 'POST', body: { ops: [{ put: { id: 'n1', kind: 'text', t: 1, x: 0, y: 0, w: 320, s: 17, c: 'ink', text: 'mine' } }] } })).status === 200, 'guests can edit the demo');
 
 // rate limit: 5 demo sessions an hour per network
 const spam = new Client(); const codes = [];
