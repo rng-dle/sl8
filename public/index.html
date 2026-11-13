@@ -23,14 +23,15 @@
     .brand { align-self: end; }
     .features { align-self: start; }
   }
+  #auth > * { min-width: 0; } /* grid children may shrink, so the card is never pushed off the right edge */
   .brand { grid-area: brand; }
   .card { grid-area: card; }
   .features { grid-area: features; }
   .brand h1 { display: flex; align-items: baseline; gap: 0.06em; margin: 0; font: 400 clamp(56px, 12vw, 104px)/0.95 var(--font-display); letter-spacing: -0.015em; }
   .tagline { margin: 20px 0 8px; font: 400 clamp(24px, 3.4vw, 30px)/1.2 var(--font-display); }
-  .pitch { margin: 0; max-width: 34ch; font-size: clamp(17px, 2.2vw, 19px); line-height: 1.5; color: var(--muted); text-wrap: balance; }
-  .features { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 15px; }
-  .features li { display: flex; gap: 10px; align-items: baseline; }
+  .pitch { margin: 0; max-width: 44ch; font-size: clamp(17px, 2.2vw, 19px); line-height: 1.5; color: var(--muted); text-wrap: balance; }
+  .features { display: grid; gap: 12px; max-width: 44ch; margin: 28px 0 0; padding: 0; list-style: none; color: var(--muted); font-size: 15px; }
+  .features li { display: flex; gap: 12px; align-items: baseline; text-wrap: pretty; line-height: 1.45; }
   .features li::before { content: ''; flex: none; width: 14px; height: 2px; border-radius: 2px; background: var(--accent); transform: translateY(-4px); }
   .card { display: grid; gap: 18px; padding: 24px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: var(--shadow); }
   .tabs { display: grid; grid-template-columns: 1fr 1fr; padding: 4px; border-radius: 12px; background: var(--paper); border: 1px solid var(--line); }
@@ -40,6 +41,7 @@
   .hint { margin: -6px 0 0; font-size: 13px; color: var(--muted); }
   #entering { display: grid; place-items: center; min-height: 80dvh; color: var(--muted); }
   .small-link { justify-self: center; font-size: 14px; }
+  #guest { width: 100%; margin-top: 2px; border-style: dashed; }
   .consent { margin: 0; font-size: 13px; color: var(--muted); text-align: center; }
   .foot { display: flex; gap: 16px; justify-content: center; padding-top: 24px; font-size: 13px; }
   .foot a { color: var(--muted); }
