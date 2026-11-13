@@ -2631,7 +2631,7 @@ async function start() {
     since = now;
     poll();
     connectLive();
-    try { if (sessionStorage.getItem('sl8:tour')) { sessionStorage.removeItem('sl8:tour'); tour(); } } catch {} // chosen during setup
+    try { if (sessionStorage.getItem('sl8:tour')) { sessionStorage.removeItem('sl8:tour'); window.firstRunTour ? window.firstRunTour(tour) : tour(); } } catch {} // new accounts (chosen during setup) and guests
     schedule(true);
     const target = location.hash.match(/^#item-([\w-]+)$/)?.[1];
     if (target) requestAnimationFrame(() => focusItem(target));
