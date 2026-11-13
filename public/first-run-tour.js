@@ -1,33 +1,48 @@
-// First-run tour for new accounts and guests, made with driver.js (loaded from the CDN only when a tour starts).
-// If driver.js can't load (offline, blocked), the built-in interactive tour in note.js runs instead.
-// TODO: pin driver.js to an exact version and add an integrity hash, or copy dist/ into public/.
+// First-run tour for new accounts and guests, made with driver.js (vendored in /vendor, MIT, built from the official source).
+// It drives the real toolbar: in the ring layout it opens the ring for the tool steps and folds it away afterwards.
+// If driver.js can't load, the built-in interactive tour in note.js runs instead.
 (() => {
-  const BASE = 'https://cdn.jsdelivr.net/npm/driver.js@1/dist/';
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const load = () => new Promise((ok, no) => {
     if (window.driver?.js) return ok();
-    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: BASE + 'driver.css' });
-    const js = Object.assign(document.createElement('script'), { src: BASE + 'driver.js.iife.js', onload: ok, onerror: no });
+    const css = Object.assign(document.createElement('link'), { rel: 'stylesheet', href: '/vendor/driver.css' });
+    const js = Object.assign(document.createElement('script'), { src: '/vendor/driver.js', onload: ok, onerror: no });
     document.head.append(css, js);
-    setTimeout(no, 8000);
   });
   const shown = (sel) => { const el = document.querySelector(sel); return el && el.getBoundingClientRect().width ? el : null; };
+  // note.js owns the ring: ringOn() says whether this device uses it, openRing() opens and folds it
+  const ring = () => typeof ringOn === 'function' && ringOn();
+  const setRing = async (on) => { if (ring() && ringOpen() !== on) { openRing(on); await wait(420); } }; // 420ms: the ring's own animation
 
   window.firstRunTour = async (fallback) => {
+    let d;
     try {
       await load();
-      while (document.querySelector('.reveal')) await new Promise((r) => setTimeout(r, 300)); // let the opening finish
+      while (document.querySelector('.reveal')) await wait(300); // let the opening finish
       const touch = matchMedia('(pointer: coarse)').matches;
-      const tools = () => shown('#fab') || shown('nav.bar'); // the ring button, or the bar
-      const steps = [
+      const tool = (name) => () => shown(`[data-tool="${name}"]`);
+      const tools = () => shown('#fab') || shown('nav.bar');
+      // inRing: the step shows a tool, so the ring is open for it (it does nothing on the bar layout)
+      const raw = [
         { popover: { title: 'Welcome to ThinkSL8', description: touch ? 'This canvas never ends. Move with two fingers, pinch to zoom.' : 'This canvas never ends. Scroll to move, Ctrl + scroll to zoom.' } },
-        { element: tools, popover: { title: 'Your tools', description: 'Pen, text, arrows, shapes and more live here. Pick one, then use the canvas.', side: 'top' } },
-        { element: () => shown('[data-tool="pen"]') || tools(), popover: { title: 'Pen', description: 'Handwrite or sketch anywhere. With a stylus, pressure shapes the line.', side: 'top' } },
-        { element: () => shown('[data-tool="text"]') || tools(), popover: { title: 'Text', description: `${touch ? 'Tap' : 'Click'} anywhere and type. No folders, no titles.`, side: 'top' } },
-        { element: () => shown('[data-tool="connect"]') || tools(), popover: { title: 'Arrows', description: 'Drag from one note to another to link them.', side: 'top' } },
+        { element: tools, popover: { title: 'Your tools', description: ring() ? 'Everything lives behind this button. Tap it any time. You can drag it anywhere. Next, we\'ll open it.' : 'Your tools live in this bar.', side: 'top' } },
+        { element: tool('pen'), inRing: true, popover: { title: 'Pen', description: 'Handwrite or sketch anywhere. With a stylus, pressure shapes the line.', side: 'top' } },
+        { element: tool('text'), inRing: true, popover: { title: 'Text', description: `Pick it, then ${touch ? 'tap' : 'click'} anywhere and type. No folders, no titles.`, side: 'top' } },
+        { element: tool('connect'), inRing: true, popover: { title: 'Arrows', description: 'Drag from one note to another to link them.', side: 'top' } },
         { element: () => shown('#ai-open'), popover: { title: 'Ask AI', description: 'Ask about what you wrote, with links back to the notes used. Needs a free account.', side: 'bottom' } },
         { element: () => shown('#menu-open'), popover: { title: 'Menu', description: 'Themes, backgrounds, portals, sharing, and this tour again.', side: 'bottom' } },
-      ].filter((s) => !s.element || s.element());
-      const d = window.driver.js.driver({ showProgress: true, allowClose: true, overlayOpacity: 0.55, smoothScroll: false, steps });
+      ];
+      const steps = raw.map((s) => ({
+        ...s,
+        onHighlightStarted: async () => { // set the ring first, then re-measure, so the highlight lands on the real button
+          if (s.inRing && ring() && !ringOpen()) { await setRing(true); d.refresh(); }
+          else if (!s.inRing && ring() && ringOpen()) { await setRing(false); d.refresh(); }
+        },
+      }));
+      d = window.driver.js.driver({
+        showProgress: true, allowClose: true, overlayOpacity: 0.55, smoothScroll: false, steps,
+        onDestroyed: () => { setRing(false); },
+      });
       d.drive();
     } catch { fallback?.(); }
   };
