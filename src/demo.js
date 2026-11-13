@@ -80,7 +80,7 @@ const look = (() => {
   const a = col(0, 0, 480, [[28, 'ink', 'Make it yours'], [17, 'ink', 'Every canvas has its own look. This whole demo uses a different theme and grid on each canvas: light, paper, chalk, blueprint and dark, with dots, lines, graph paper or grid.'],
     [17, 'blue', 'The Market has templates and themes. Use one to start a canvas, or publish your own.'], [17, 'green', 'Share a canvas, or only chosen squares of it, by link as view or edit. Needs a verified account.'],
     [17, 'orange', 'Installs as an app on phone and Mac, and works offline on the Mac app.']], 'a');
-  return { key: 'look', title: '6 · Themes and sharing', style: { theme: 'chalk', pattern: 'iso' }, items: a.items };
+  return { key: 'look', title: '6 · Themes, sharing', style: { theme: 'chalk', pattern: 'iso' }, items: a.items };
 })();
 
 // start first: its portals open the others
