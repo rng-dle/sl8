@@ -48,7 +48,7 @@ jobs:
         run: |
           set -o pipefail
           rc=0
-          for t in account-test share-test share-follow-test market-test voice-test; do node test/$t.mjs 2>&1 | tee -a "$RUNNER_TEMP/tests.log" || rc=1; done
+          for t in account-test share-test share-follow-test market-test voice-test guest-test; do node test/$t.mjs 2>&1 | tee -a "$RUNNER_TEMP/tests.log" || rc=1; done
           exit $rc
       # Failures as annotations too, so they can be read from the checks API without downloading the raw log.
       - name: Report failures

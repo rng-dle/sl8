@@ -72,6 +72,7 @@
         <p class="notice error" id="error" role="alert" hidden></p>
         <button class="btn primary" id="submit" type="submit">Log in</button>
         <a class="small-link" id="forgot" href="/reset">Forgot your password?</a>
+        <button class="btn" id="guest" type="button">Try the demo as a guest</button>
         <p class="consent" id="consent" hidden>By creating an account you agree to the <a href="/terms">Terms</a> and <a href="/privacy">Privacy Policy</a>.</p>
       </form>
     </div>
@@ -82,7 +83,7 @@
 <script src="/common.js"></script>
 <script>
 const $ = (s) => document.querySelector(s);
-let mode = 'login';
+let mode = 'login', upgrading = false;
 
 function setMode(m) {
   mode = m;
@@ -116,7 +117,7 @@ $('#form').addEventListener('submit', async (e) => {
   btn.disabled = true;
   $('#error').hidden = true;
   try {
-    await api(mode === 'login' ? '/api/login' : '/api/signup', {
+    await api(upgrading ? '/api/guest/upgrade' : mode === 'login' ? '/api/login' : '/api/signup', {
       method: 'POST', body: { email: $('#email').value, password: $('#password').value, turnstile: botToken() },
     });
     $('#password').value = '';
@@ -128,10 +129,45 @@ $('#form').addEventListener('submit', async (e) => {
   }
 });
 
+// A throwaway account with the demo canvases, wiped after about a day. The guided tour starts on the first canvas.
+$('#guest').onclick = async () => {
+  $('#guest').disabled = true;
+  $('#error').hidden = true;
+  try {
+    await api('/api/guest', { method: 'POST', body: { turnstile: botToken() } });
+    try { sessionStorage.setItem('sl8:tour', '1'); } catch {}
+    await enter();
+  } catch (err) {
+    $('#error').textContent = err.message;
+    $('#error').hidden = false;
+    $('#guest').disabled = false;
+  }
+};
+
+// /?upgrade=1 from a guest session: the sign-up form turns the demo into a real account, keeping its canvases.
+async function boot() {
+  if (new URLSearchParams(location.search).has('upgrade')) {
+    const me = await api('/api/me');
+    if (me.guest) {
+      upgrading = true;
+      setMode('signup');
+      $('#tab-login').hidden = true;
+      $('#tab-signup').textContent = 'Save your demo canvases';
+      $('#submit').textContent = 'Create account and keep canvases';
+      $('#guest').hidden = true;
+      $('#entering').hidden = true;
+      $('#auth').hidden = false;
+      $('#foot').hidden = false;
+      return;
+    }
+  }
+  return enter();
+}
+
 let botToken = () => undefined;
 botCheck($('#bot')).then((f) => (botToken = f));
 
-enter().catch((err) => {
+boot().catch((err) => {
   $('#entering').hidden = true;
   $('#auth').hidden = false;
   $('#foot').hidden = false;

@@ -243,6 +243,7 @@ export async function authorize(req, env) {
   const client = await env.OAUTH_PROVIDER.lookupClient(oauth.clientId);
   const user = await currentUser(req, env);
   if (!user) return page(`<h1>Sign in first</h1><p>Open ThinkSL8 and sign in, then come back and reload this page to connect <b>${esc(client?.clientName || 'an app')}</b>.</p><p><a class="btn" href="/" target="_blank" rel="noopener">Open ThinkSL8</a> <a class="btn" href="">Reload</a></p>`, 401);
+  if (user.guest) return page('<h1>Create an account first</h1><p>The guest demo cannot connect an AI. <a href="/?upgrade=1">Create a free account</a> (your demo canvases come with you), then connect.</p>', 403);
   if (req.method === 'GET') {
     return page(`<h1>Connect ${esc(client?.clientName || 'an app')} to ThinkSL8?</h1><p>Signed in as ${esc(user.email)}. This lets the app read your canvases, typed notes and voice notes (with transcripts). It never sees your password and you can stop it by deleting the connection in the app.</p>
 <form method="post" action="/authorize"><input type="hidden" name="q" value="${esc(url.search)}">
