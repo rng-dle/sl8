@@ -3,9 +3,12 @@ import { DurableObject } from 'cloudflare:workers';
 import { aiRoutes } from './ai.js';
 import { EMBEDS } from '../public/embeds.js';
 import { canSendMail, sendMail, resetEmail, verifyEmail } from './mail.js';
+import { DEMO } from './demo.js';
 
 const OLD_HOSTS = new Set(['sl8.nastaliq.co']); // still served; reset links from it point at thinksl8.com
 const SESSION_DAYS = 30;
+// Guest demo: a throwaway account seeded from src/demo.js, purged after GUEST_HOURS. Capped so it can't be farmed.
+const GUEST_HOURS = 24, GUEST_MAX = 1500, GUEST_NOTES = 12, GUEST_ITEMS = 1500;
 // [x, y, width, font size, colour, text] for the optional sample canvas created during setup
 const SAMPLE = [
   [0, 0, 560, 32, 'ink', 'Welcome to your canvas.'],
@@ -41,14 +44,14 @@ async function hashPw(pw, saltHex) {
 
 const cookie = (token, maxAge) => `sid=${token}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
 
-async function startSession(env, userId, email) {
+async function startSession(env, userId, email, days = SESSION_DAYS, extra = {}) {
   const token = hex(crypto.getRandomValues(new Uint8Array(32)));
   const now = Date.now();
   await env.DB.batch([
     env.DB.prepare('DELETE FROM sessions WHERE expires_at < ?').bind(now),
-    env.DB.prepare('INSERT INTO sessions VALUES (?, ?, ?)').bind(await sha256(token), userId, now + SESSION_DAYS * 864e5),
+    env.DB.prepare('INSERT INTO sessions VALUES (?, ?, ?)').bind(await sha256(token), userId, now + days * 864e5),
   ]);
-  return json({ email }, 200, { 'set-cookie': cookie(token, SESSION_DAYS * 86400) });
+  return json({ email, ...extra }, 200, { 'set-cookie': cookie(token, days * 86400) });
 }
 
 function sessionToken(req) {
@@ -59,7 +62,7 @@ async function currentUser(req, env) {
   const token = sessionToken(req);
   if (!token) return null;
   return env.DB.prepare(
-    'SELECT u.id, u.email, u.onboarded, u.verified FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?'
+    'SELECT u.id, u.email, u.onboarded, u.verified, u.guest, u.created_at FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token_hash = ? AND s.expires_at > ?'
   ).bind(await sha256(token), Date.now()).first();
 }
 
@@ -554,6 +557,46 @@ async function shared(req, env, ctx, url, token, canvas, ops, fileId, body) {
   return json(`{"now":${Date.now()},"note":${JSON.stringify(note)},"share":${JSON.stringify(share)},"items":[${rows.filter((r) => shown(area, byId, r.it)).map((r) => r.data).join(',')}]}`);
 }
 
+// Everything a user owns, in one batch (files are separate: deleteFiles). Used by account deletion and the guest purge.
+function eraseUser(env, userId) {
+  const mine = 'SELECT id FROM notes WHERE user_id = ?';
+  return env.DB.batch([
+    env.DB.prepare(`DELETE FROM items WHERE note_id IN (${mine})`).bind(userId),
+    env.DB.prepare(`DELETE FROM share_follow WHERE token IN (SELECT token FROM shares WHERE note_id IN (${mine}))`).bind(userId),
+    ...['canvas_style', 'shares', 'tombstones'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE note_id IN (${mine})`).bind(userId)),
+    ...['notes', 'ai_connections', 'ai_usage', 'resets', 'verifies', 'sessions'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(userId)),
+    env.DB.prepare('DELETE FROM users WHERE id = ?').bind(userId),
+  ]);
+}
+
+// A guest gets a fake address and a password nobody knows, and the demo canvases (fresh ids, portals re-pointed).
+// "Start here" is the newest canvas so it opens first.
+async function guestStart(env, req, body) {
+  if (await throttled(env, 'guest:' + clientIp(req), 5, 3600)) return fail(429, 'Too many demo sessions from this network. Try again in an hour.');
+  if (!(await human(env, req, body.turnstile))) return fail(400, NOT_HUMAN);
+  if (await env.DB.prepare('SELECT count(*) AS n FROM users WHERE guest = 1').first('n') >= GUEST_MAX) return fail(503, 'The demo is busy right now. Try again in a few minutes, or create a free account.');
+  const id = crypto.randomUUID(), now = Date.now(), email = `guest-${id}@guest.invalid`;
+  const ids = new Map(DEMO.map((c) => [c.key, crypto.randomUUID()]));
+  const stmts = [env.DB.prepare('INSERT INTO users (id, email, pw_hash, pw_salt, created_at, onboarded, guest) VALUES (?, ?, ?, ?, ?, 1, 1)')
+    .bind(id, email, hex(crypto.getRandomValues(new Uint8Array(32))), hex(crypto.getRandomValues(new Uint8Array(16))), now)];
+  DEMO.forEach((c, i) => {
+    const noteId = ids.get(c.key), at = now - i * 1000;
+    const fresh = new Map(c.items.map((it) => [it.k, crypto.randomUUID()]));
+    const items = c.items.map(({ k, to, a, b, ...it }, j) => ({ ...it, id: fresh.get(k), t: at + j, ...(to && { target: ids.get(to) }), ...(a && { a: fresh.get(a), b: fresh.get(b) }) }));
+    stmts.push(env.DB.prepare('INSERT INTO notes VALUES (?, ?, ?, ?, ?)').bind(noteId, id, c.title, at, at), saveStyle(env, noteId, cleanStyle(c.style)));
+    stmts.push(env.DB.prepare("INSERT INTO items (note_id, id, t, data, updated_at) SELECT ?, json_extract(value, '$.id'), json_extract(value, '$.t'), value, ? FROM json_each(?)")
+      .bind(noteId, at, JSON.stringify(items)));
+  });
+  await env.DB.batch(stmts);
+  return startSession(env, id, email, GUEST_HOURS / 24, { guest: true });
+}
+
+// The scheduled handler (every few minutes): remove guests past their time. Guests can't upload files, so there are none to clear.
+async function purgeGuests(env) {
+  const { results } = await env.DB.prepare('SELECT id FROM users WHERE guest = 1 AND created_at < ? LIMIT 25').bind(Date.now() - GUEST_HOURS * 36e5).all();
+  for (const u of results) await eraseUser(env, u.id);
+}
+
 async function api(req, env, ctx, url) {
   const path = url.pathname;
   const method = req.method;
@@ -590,6 +633,8 @@ async function api(req, env, ctx, url) {
     return startSession(env, id, c.email);
   }
 
+  if (path === '/api/guest' && method === 'POST') return guestStart(env, req, body);
+
   if (path === '/api/login' && method === 'POST') {
     const c = credentials(body);
     if (c.error) return fail(400, 'Wrong email or password.');
@@ -607,7 +652,9 @@ async function api(req, env, ctx, url) {
 
   if (path === '/api/logout' && method === 'POST') {
     const token = sessionToken(req);
+    const who = token && await currentUser(req, env);
     if (token) await env.DB.prepare('DELETE FROM sessions WHERE token_hash = ?').bind(await sha256(token)).run();
+    if (who?.guest) await eraseUser(env, who.id); // leaving a demo wipes it now
     return json({ ok: true }, 200, { 'set-cookie': cookie('', 0) });
   }
 
@@ -667,6 +714,29 @@ async function api(req, env, ctx, url) {
   const user = await currentUser(req, env);
   if (!user) return fail(401, 'Log in to continue.');
 
+  if (user.guest) { // the demo is for trying the canvas: nothing that costs money, stores files, or leaves the demo
+    const blocked = path.startsWith('/api/ai') || path === '/api/account/delete' || path === '/api/password/change'
+      || (method === 'POST' && (path === '/api/files' || path === '/api/market' || /^\/api\/notes\/[\w-]+\/shares$/.test(path)));
+    if (blocked) return json({ error: 'Create a free account to use this. The guest demo is for trying the canvas.', kind: 'guest' }, 403);
+  }
+
+  if (path === '/api/guest/upgrade' && method === 'POST') { // keep the demo canvases by turning the guest into a real account
+    if (!user.guest) return fail(400, 'You already have an account.');
+    const c = credentials(body);
+    if (c.error) return fail(400, c.error);
+    if (await throttled(env, 'signup:' + clientIp(req), 10, 3600)) return fail(429, 'Too many new accounts from this network. Try again in an hour.');
+    if (!(await human(env, req, body.turnstile))) return fail(400, NOT_HUMAN);
+    const [hash, salt] = await newPasswordFields(c.password);
+    try {
+      await env.DB.prepare('UPDATE users SET email = ?, pw_hash = ?, pw_salt = ?, guest = 0 WHERE id = ? AND guest = 1').bind(c.email, hash, salt, user.id).run();
+    } catch (e) {
+      if (String(e.message).includes('UNIQUE')) return fail(409, 'That email already has an account. Log in instead.');
+      throw e;
+    }
+    if (canSendMail(env)) await sendVerify(env, ctx, url, { id: user.id, email: c.email });
+    return startSession(env, user.id, c.email); // a full-length session replaces the one-day guest session
+  }
+
   if (path === '/api/password/change' && method === 'POST') {
     if (!okPassword(body.password)) return fail(400, PW_RULE);
     if (await throttled(env, 'pwchange:' + user.id, 10, 600)) return fail(429, 'Too many attempts. Try again in 10 minutes.');
@@ -689,14 +759,7 @@ async function api(req, env, ctx, url) {
     if (await throttled(env, 'delete:' + user.id, 10, 600)) return fail(429, 'Too many attempts. Try again in 10 minutes.');
     const u = await env.DB.prepare('SELECT * FROM users WHERE id = ?').bind(user.id).first();
     if (!(await passwordMatches(u, body.password))) return fail(400, 'That password is wrong, so nothing was deleted.');
-    const mine = 'SELECT id FROM notes WHERE user_id = ?';
-    await env.DB.batch([
-      env.DB.prepare(`DELETE FROM items WHERE note_id IN (${mine})`).bind(user.id),
-      env.DB.prepare(`DELETE FROM share_follow WHERE token IN (SELECT token FROM shares WHERE note_id IN (${mine}))`).bind(user.id),
-      ...['canvas_style', 'shares', 'tombstones'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE note_id IN (${mine})`).bind(user.id)),
-      ...['notes', 'ai_connections', 'ai_usage', 'resets', 'verifies', 'sessions'].map((t) => env.DB.prepare(`DELETE FROM ${t} WHERE user_id = ?`).bind(user.id)),
-      env.DB.prepare('DELETE FROM users WHERE id = ?').bind(user.id),
-    ]);
+    await eraseUser(env, user.id);
     ctx.waitUntil(deleteFiles(env, user.id).catch((e) => console.error('file cleanup failed', e)));
     return json({ ok: true }, 200, { 'set-cookie': cookie('', 0) });
   }
@@ -763,7 +826,7 @@ async function api(req, env, ctx, url) {
 
   if (path === '/api/me' && method === 'GET') {
     const last = await env.DB.prepare('SELECT id FROM notes WHERE user_id = ? ORDER BY updated_at DESC LIMIT 1').bind(user.id).first('id');
-    return json({ email: user.email, onboarded: !!user.onboarded, verified: !!user.verified, lastNoteId: last || null });
+    return json({ email: user.guest ? null : user.email, onboarded: !!user.onboarded, verified: !!user.verified, lastNoteId: last || null, guest: !!user.guest, guestUntil: user.guest ? user.created_at + GUEST_HOURS * 36e5 : null });
   }
   if (path === '/api/verify/resend' && method === 'POST') {
     if (user.verified) return json({ ok: true });
@@ -801,6 +864,8 @@ async function api(req, env, ctx, url) {
       return json({ notes: results });
     }
     if (method === 'POST') {
+      if (user.guest && await env.DB.prepare('SELECT count(*) AS n FROM notes WHERE user_id = ?').bind(user.id).first('n') >= GUEST_NOTES)
+        return json({ error: `The demo holds ${GUEST_NOTES} canvases. Create a free account for more.`, kind: 'guest' }, 403);
       const now = Date.now();
       const sample = body.sample === true;
       // a device that made the canvas offline picks its id (the Mac app); asking again with the same id is a no-op
@@ -831,6 +896,8 @@ async function api(req, env, ctx, url) {
       .bind(noteId, user.id).first();
     if (!note) return fail(404, 'Note not found.');
 
+    if (ops && method === 'POST' && user.guest && await env.DB.prepare('SELECT count(*) AS n FROM items WHERE note_id IN (SELECT id FROM notes WHERE user_id = ?)').bind(user.id).first('n') >= GUEST_ITEMS)
+      return json({ error: 'The demo is full. Create a free account to keep going.', kind: 'guest' }, 403);
     if (ops && method === 'POST') return saved(ctx, env, noteId, body, saveOps(env, noteId, body.ops), body.ops);
     if (!ops && !shares && req.headers.get('upgrade') === 'websocket') return join(env, noteId, req, true);
 
@@ -905,7 +972,7 @@ async function api(req, env, ctx, url) {
   return fail(404, 'Not found.');
 }
 
-export { currentUser, saveOps, saved, sniffVideo, sniffAudio, fileKey, MAX_FILES, MAX_VIDEO };
+export { currentUser, purgeGuests, saveOps, saved, sniffVideo, sniffAudio, fileKey, MAX_FILES, MAX_VIDEO };
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);

@@ -111,6 +111,7 @@ export async function alertsPage(req, env) {
   if (url.pathname !== '/alerts') return null;
   const user = await currentUser(req, env);
   if (!user) return page(`<h1>Sign in first</h1><p><a href="/">Open ThinkSL8</a>, sign in, then come back to this page.</p>`, 401);
+  if (user.guest) return page('<h1>Create an account first</h1><p>Alerts are not part of the guest demo. <a href="/?upgrade=1">Create a free account</a>.</p>', 403);
   let flash = '';
   if (req.method === 'POST') {
     if (req.headers.get('origin') !== url.origin) return page('<h1>Not allowed</h1>', 403);

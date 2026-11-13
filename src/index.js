@@ -1,6 +1,6 @@
 // Entry point: the MCP connector (OAuth 2.1 + /mcp) wraps the existing app. Everything that isn't the connector goes to worker.js unchanged.
 import OAuthProvider from '@cloudflare/workers-oauth-provider';
-import app, { Room } from './worker.js';
+import app, { Room, purgeGuests } from './worker.js';
 import { McpApi, authorize } from './mcp.js';
 import { alertsPage, firePending } from './hooks.js';
 import assetlinks from '../android/assetlinks.json';
@@ -28,6 +28,6 @@ export default {
   },
   // Every few minutes (wrangler.toml [triggers]): send canvas alerts that waited out a cooldown.
   scheduled(event, env, ctx) {
-    ctx.waitUntil(firePending(env));
+    ctx.waitUntil(Promise.all([firePending(env), purgeGuests(env)]));
   },
 };
